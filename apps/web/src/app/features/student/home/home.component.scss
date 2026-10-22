@@ -505,6 +505,10 @@
     font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
     color: var(--brand-purple);
   }
+  .cg-choice {
+    border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 700;
+    background: var(--tint-1); color: var(--ink-soft);
+  }
   .cg-title {
     font-family: var(--font-display);
     font-size: clamp(24px, 4vw, 36px); font-weight: 800; line-height: 1.15;
