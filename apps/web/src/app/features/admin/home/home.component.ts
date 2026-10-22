@@ -310,6 +310,13 @@ export const HOME_GROUPS: readonly TaskGroup[] = [
         words: 'mail email code link not received never arrived bounced delivery sent',
       },
       {
+        label: 'Upload role preferences',
+        icon: 'upload',
+        path: '/admin/role-preferences',
+        mainAdminOnly: true,
+        words: 'role preference career goal choice form sheet xlsx',
+      },
+      {
         label: 'Ask REEP',
         icon: 'smart_toy',
         path: '/admin/agent',

@@ -96,7 +96,8 @@ Entry format:
   `test_student_record_access.py::test_the_access_tab_half_of_the_record_is_the_offices`,
   `test_google_callback.py::test_a_barred_roster_row_gets_no_session_and_the_right_code`,
   `test_sso_contract.py`; E2E TC-403, TC-523, TC-541 (new), TC-542 (new).
-- **Status:** open PR.
+- **Status:** merged to `dev` 2026-10-17, promoted to `main` 2026-10-17 ([PR #209](https://github.com/darshani8/reep-/pull/209), [PR #210](https://github.com/darshani8/reep-/pull/210)); deployed
+  2026-10-17 by [Deploy run 140](https://github.com/darshani8/reep-/actions/runs/39023915955).
 - **Left open:** a screen that is already open when the account is disabled
   shows the screen's own "Sign in required" errors until the next page load;
   the note appears on that load. Nothing intercepts every `fetch` in the app.
@@ -130,8 +131,9 @@ Entry format:
   every action checked against AWS's service reference as a non-write; the
   workflow step run against a stubbed `aws` CLI for the blocked and the
   DETECTION_FAILED paths; CDK suite 148 passed, 22 skipped.
-- **Status:** open PR. Needs a `reep-core` deploy (CDK deploy, a `core-*`
-  option) before the role exists; #117 closes itself on the first run where
+- **Status:** merged to `dev` 2026-10-16, promoted to `main` 2026-10-17 ([PR #209](https://github.com/darshani8/reep-/pull/209), [PR #210](https://github.com/darshani8/reep-/pull/210)). Not deployed:
+  needs a `reep-core` deploy (CDK deploy, a `core-*` option) before the role
+  exists; #117 closes itself on the first run where
   every check completes.
 - **Left open:** `reep-edge-waf` and `reep-dr-vault` are diffed but still not
   drift-checked; they live in other regions.
@@ -163,7 +165,8 @@ Entry format:
   `test_without_a_pin_the_nat_ami_still_resolves`; a synth with the real
   context changes only the NAT `ImageId` (to the value already deployed), the
   four deletion policies below and the new drift role.
-- **Status:** open PR. The first `cdk diff` after merge should show
+- **Status:** merged to `dev` 2026-10-16, promoted to `main` 2026-10-17 ([PR #209](https://github.com/darshani8/reep-/pull/209), [PR #210](https://github.com/darshani8/reep-/pull/210)). Not deployed:
+  rides the next `reep-core` deploy. The first `cdk diff` should show
   `NatInstance` unchanged; if it shows `replace`, the pin is wrong and must
   not be deployed.
 - **Left open:** the tag-only difference on the API scaling target that #118
@@ -187,8 +190,8 @@ Entry format:
 - **Where:** [PR #201](https://github.com/darshani8/reep-/pull/201); `infra/cdk/reep_core/stack.py`.
 - **Checked by:** `test_a_failed_nat_create_leaves_nothing_to_collide_with`;
   `test_nothing_in_the_stack_deletes_on_removal` still passes.
-- **Status:** open PR; the policy change rides the next `reep-core` deploy and
-  touches no resource.
+- **Status:** merged to `dev` 2026-10-16, promoted to `main` 2026-10-17 ([PR #209](https://github.com/darshani8/reep-/pull/209), [PR #210](https://github.com/darshani8/reep-/pull/210)). Not deployed:
+  the policy change rides the next `reep-core` deploy and touches no resource.
 
 ## 2026-10-16 — Known vulnerabilities in PyJWT, pypdf and the web build
 
@@ -213,7 +216,8 @@ Entry format:
   database; `tsc`, `ng test` and `ng build` on Node 22.23.3. Every
   `jwt.decode` uses a one-family algorithm list, so the mixed HMAC and
   asymmetric advisory does not apply.
-- **Status:** open PR.
+- **Status:** merged to `dev` 2026-10-16, promoted to `main` 2026-10-17 ([PR #209](https://github.com/darshani8/reep-/pull/209), [PR #210](https://github.com/darshani8/reep-/pull/210)); deployed
+  2026-10-17 by [Deploy run 140](https://github.com/darshani8/reep-/actions/runs/39023915955).
 
 ## 2026-10-16 — Every mentor could verify their mentees' skills, and the office could not choose who verifies
 

@@ -47,6 +47,50 @@
       }
     </div>
 
+    <!-- The career goal: the role preferences the placement office collected,
+         first choice first. Read-only on purpose -- there is no "change my
+         goal"; the preference order IS the priority. -->
+    @if (careerGoal(); as goal) {
+      <section class="card career-goal" aria-labelledby="career-goal-title">
+        <div class="cg-eyebrow">
+          <span class="cg-label">My career goal</span>
+          <span class="cg-choice">1st choice</span>
+        </div>
+        <h2 id="career-goal-title" class="cg-title">{{ goal.first }}</h2>
+        @if (goal.backups.length) {
+          <div class="cg-backups">
+            <span class="cg-backups-label">Backup goals</span>
+            @for (role of goal.backups; track role; let i = $index) {
+              <span class="cg-pill"><span class="cg-rank">{{ i + 2 }}</span>{{ role }}</span>
+            }
+          </div>
+        }
+        @if (readiness(); as r) {
+          @if (r.score !== null) {
+            <div class="cg-readiness">
+              <div
+                class="cg-ring"
+                role="img"
+                [attr.aria-label]="r.score + '% placement ready'"
+                [style.--pct]="r.score"
+              >
+                <span class="cg-ring-num">{{ r.score }}%</span>
+                <span class="cg-ring-sub">ready</span>
+              </div>
+              <div class="cg-facts">
+                <div class="cg-facts-title">Placement readiness</div>
+                @for (f of r.factors; track f.label) {
+                  @if (f.measured) {
+                    <div>{{ f.label }} <strong>{{ f.met ? 'Met' : 'Not met' }}</strong></div>
+                  }
+                }
+              </div>
+            </div>
+          }
+        }
+      </section>
+    }
+
     <!-- The three programme stage cards. Structure is the code catalogue; only
          this student's status per row is data. -->
     <div class="grid-3">
