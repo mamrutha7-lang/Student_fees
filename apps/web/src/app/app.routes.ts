@@ -546,6 +546,14 @@ export const routes: Routes = [
       // address the deployment has ever written to, which is a roster of
       // people by another name (see routers/admin_mail.py).
       {
+        path: 'admin/role-preferences',
+        canActivate: [roleGuard('ADMIN')],
+        loadComponent: () =>
+          import('./features/admin/role-preferences/role-preferences.component').then(
+            (m) => m.AdminRolePreferencesComponent,
+          ),
+      },
+      {
         path: 'admin/mail',
         canActivate: [roleGuard('ADMIN')],
         loadComponent: () =>

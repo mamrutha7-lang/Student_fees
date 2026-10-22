@@ -641,7 +641,30 @@ def overview(
         # already needs this document, and a separate GET per view is the
         # volley this endpoint exists to avoid.
         "academics": my_academics(session, db),
+        # The career-goal card: the role preferences the office loaded from the
+        # college's form, first choice first.
+        "career_goal": my_career_goal(session, db),
     }
+
+
+class CareerGoalOut(BaseModel):
+    #: Role names in priority order, first choice first. Empty when the office
+    #: has not loaded this student's preferences, never a guessed role.
+    preferences: list[str]
+
+
+@router.get("/career-goal", response_model=CareerGoalOut)
+def my_career_goal(
+    session: dict = Depends(get_current_session), db: Session = Depends(get_db)
+) -> CareerGoalOut:
+    """The student's role preferences as their career goal. Read-only on purpose:
+    the goal is the preference the placement office collected, so there is no
+    student-side write and no "change my goal"."""
+    stu = db.get(Student, _require_student(session))
+    if stu is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Student not found")
+    prefs = [p for p in (stu.role_preferences or []) if isinstance(p, str) and p.strip()]
+    return CareerGoalOut(preferences=prefs)
 
 
 class SwocItemOut(BaseModel):

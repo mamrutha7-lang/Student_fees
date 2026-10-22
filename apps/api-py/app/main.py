@@ -45,6 +45,7 @@ from .routers import (
     admin_interview_tracks,
     admin_mentoring,
     admin_promotion,
+    admin_role_preferences,
     admin_student_360,
     admin_student_record,
     admin_students,
@@ -537,6 +538,7 @@ app.include_router(badge_verification.router, prefix="/api")
 # is the one admin surface that names no student at all: every fence in it is
 # `admin.catalogue` plus B1.2's reach, and none of it is rule 2's.
 app.include_router(admin_catalogue.router, prefix="/api")
+app.include_router(admin_role_preferences.router, prefix="/api")
 app.include_router(registration.router, prefix="/api")
 # B5.1 — the Specialization Matrix as rows. MOUNTED BEFORE THE BANK ROUTER, and
 # the order is load-bearing rather than tidy: both live under

@@ -244,6 +244,12 @@ export const ADMIN_NAVIGATION: readonly NavigationGroup[] = [
         path: '/admin/mail',
         mainAdminOnly: true,
       },
+      {
+        label: 'Role preferences',
+        icon: 'upload',
+        path: '/admin/role-preferences',
+        mainAdminOnly: true,
+      },
     ],
   },
 ];
