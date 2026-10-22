@@ -495,3 +495,43 @@
 .swoc-note {
   margin-top: 10px;
 }
+
+// ---- the career goal card ---------------------------------------------------
+.career-goal {
+  margin-bottom: 16px;
+  .cg-eyebrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .cg-label {
+    font-family: var(--font-display);
+    font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--brand-purple);
+  }
+  .cg-title {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 4vw, 36px); font-weight: 800; line-height: 1.15;
+    margin: 10px 0 12px; color: var(--ink);
+  }
+  .cg-backups { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .cg-backups-label { color: var(--muted); font-size: 14px; }
+  .cg-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--hairline); border-radius: 999px; padding: 6px 14px 6px 6px;
+    font-size: 14px; font-weight: 600;
+  }
+  .cg-rank {
+    display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--tint-1); font-size: 12px; font-weight: 700;
+  }
+  .cg-readiness { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+  .cg-ring {
+    --pct: 0;
+    width: 140px; height: 140px; border-radius: 50%;
+    display: grid; place-content: center; text-align: center;
+    background:
+      radial-gradient(closest-side, var(--surface, #fff) 80%, transparent 81%),
+      conic-gradient(var(--brand-purple) calc(var(--pct) * 1%), var(--hairline) 0);
+  }
+  .cg-ring-num { font-family: var(--font-display); font-size: 30px; font-weight: 800; }
+  .cg-ring-sub { font-size: 12px; }
+  .cg-facts { display: grid; gap: 6px; font-size: 14px; }
+  .cg-facts-title { font-weight: 700; color: var(--brand-purple); }
+}

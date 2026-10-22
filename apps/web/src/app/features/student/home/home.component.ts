@@ -162,6 +162,8 @@ interface Overview {
   recommendations: { items: Recommendation[] } | null;
   swoc: SwocBoard | null;
   academics: Academics | null;
+  /** The role preferences the office loaded, first choice first. */
+  career_goal: { preferences: string[] } | null;
 }
 
 // ---- overview.swoc -----------------------------------------------------------
@@ -431,6 +433,14 @@ export class StudentHomeComponent {
   // ---- placement readiness -----------------------------------------------------
 
   readonly readiness = computed(() => this.overview()?.placement_readiness ?? null);
+
+  /** The first preference is the goal; the rest are backups, in order. Null
+   *  when the office has not loaded this student's preferences. */
+  readonly careerGoal = computed(() => {
+    const prefs = this.overview()?.career_goal?.preferences ?? [];
+    if (!prefs.length) return null;
+    return { first: prefs[0], backups: prefs.slice(1) };
+  });
 
   bandChip(band: string): ChipTone {
     if (band === 'Ready' || band === 'On track') return 'good';
