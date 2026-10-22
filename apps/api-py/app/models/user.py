@@ -303,6 +303,14 @@ class Student(Base):
         ForeignKey("academic_specializations.id", ondelete="SET NULL"), nullable=True, index=True
     )
     mentor_id: Mapped[str | None] = mapped_column(ForeignKey("mentors.id"), nullable=True, index=True)
+    # THE STUDENT'S ROLE PREFERENCES, IN PRIORITY ORDER (2026-10-22, migration
+    # b9e3c71a4f20). A list of role names, first choice first, as the student
+    # gave them on the college's role-preference form; the Main Admin loads that
+    # form's spreadsheet at `POST /api/admin/role-preferences/import`. The
+    # student's landing shows the first as their career goal and the rest as
+    # backups, and there is deliberately no student-side write: the goal is the
+    # preference the office collected. NULL means none was collected.
+    role_preferences: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     current_stage: Mapped[Stage] = mapped_column(
         Enum(Stage, name="stage"), default=Stage.EXCEL, server_default="EXCEL"
     )

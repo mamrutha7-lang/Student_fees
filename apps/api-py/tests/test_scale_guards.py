@@ -273,7 +273,11 @@ def test_overview_composes_all_ten_reads(client, make_user):
         "placement_readiness",
         "recommendations",
         "academics",
+        "career_goal",
     }
+    # A student the office has loaded no role preferences for gets an empty
+    # list, never a guessed goal, and the landing draws no card.
+    assert body["career_goal"] == {"preferences": []}
     # A brand-new student still gets a whole document — the aggregate must not
     # turn "no data yet" into a missing key or a 500.
     assert body["dashboard"] is not None
