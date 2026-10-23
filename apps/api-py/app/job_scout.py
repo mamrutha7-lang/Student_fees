@@ -61,6 +61,8 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .job_sources import (
+    CAREERS,
+    DESCRIPTION_MAX,
     PROVIDER_NAMES,
     PROVIDERS,
     FoundJob,
@@ -129,7 +131,7 @@ _SENIOR_TITLE = re.compile(
 #: MBA fresher is most often offered in India, and a bank's relationship
 #: manager is the commonest campus offer for a Finance or Marketing MBA, so
 #: those two stay.
-_MANAGER = re.compile(r"\bmanager\b", re.IGNORECASE)
+_MANAGER = re.compile(r"\b(manager|mgr)\b", re.IGNORECASE)
 _FRESHER_MANAGER = re.compile(r"\b(assistant|asst\.?|relationship)\s+manager\b", re.IGNORECASE)
 #: "2-5 years of experience", "3+ yrs exp", "experience: minimum 2 years". The
 #: LOWER bound is what is read: "0-2 years" is a fresher role and "2+" is not.
@@ -161,6 +163,13 @@ MAX_FRESHER_YEARS = 1
 
 #: How far back a closed posting still counts as the same advert.
 DUPLICATE_WINDOW = timedelta(days=90)
+
+#: A company-feed posting is closed the morning its company stops listing it
+#: (`close_withdrawn`), not by the age limit: a role on a company's own feed is
+#: open today however long ago it was first posted. This is the backstop for a
+#: company whose feed is never read again (a board removed from
+#: `job_sources.COMPANY_BOARDS`, or the feeds switched off).
+CAREERS_MAX_ON_BOARD = timedelta(days=60)
 
 #: The run holds this transaction-level advisory lock, so a second run started
 #: while one is going (the Ops task pressed at 06:00) finds it taken and stops
@@ -250,6 +259,8 @@ class ScoutSummary:
     duplicates: int = 0
     capped: int = 0
     closed: int = 0
+    #: Of `closed`, the company-feed postings their company no longer lists.
+    withdrawn: int = 0
     #: Adverts skipped because they were older than the age limit.
     stale: int = 0
     #: Adverts skipped because `is_suspicious` read them as a scam.
@@ -282,6 +293,7 @@ class ScoutSummary:
             "duplicates": self.duplicates,
             "capped": self.capped,
             "closed": self.closed,
+            "withdrawn": self.withdrawn,
             "stale": self.stale,
             "suspicious": self.suspicious,
             "per_leaf": dict(self.per_leaf),
@@ -296,7 +308,8 @@ class ScoutSummary:
 
 
 def source_of_ref(source_ref: str | None) -> str:
-    """`adzuna` / `jooble` for an agent posting, `office` for everything else.
+    """`adzuna` / `jooble` / `careers` for an agent posting, `office` for
+    everything else.
 
     `source_ref` had no writer before this module, so a posting with no ref, or
     with a ref this module did not write, is the office's.
@@ -555,16 +568,43 @@ def close_expired(db: Session, now: datetime) -> int:
     the `source_ref` prefixes this module writes and nothing broader.
     """
     cutoff = now - timedelta(days=settings.job_scout_max_age_days)
+    careers = Job.source_ref.like(f"{CAREERS}:%")
     rows = db.scalars(
         select(Job).where(
             Job.status == STATUS_OPEN,
             _agent_ref_clause(),
-            or_(Job.posted_on < cutoff, Job.closes_on < now, Job.course_id.is_(None)),
+            or_(
+                and_(Job.posted_on < cutoff, ~careers),
+                and_(careers, Job.created_at < now - CAREERS_MAX_ON_BOARD),
+                Job.closes_on < now,
+                Job.course_id.is_(None),
+            ),
         )
     ).all()
     for job in rows:
         job.status = STATUS_CLOSED
     return len(rows)
+
+
+def close_withdrawn(db: Session, sources: Sequence[Source]) -> int:
+    """Close every OPEN company-feed posting whose company's feed was read in
+    full this run and no longer lists it: the role was filled or taken down,
+    and a student pressing Apply would reach a page that is gone. A company
+    that could not be read this morning closes nothing."""
+    closed = 0
+    for source in sources:
+        still_listed = getattr(source, "still_listed", None)
+        answer = still_listed() if callable(still_listed) else None
+        if answer is None:
+            continue
+        read, listed = answer
+        prefix = f"{source.name}:"
+        for job in db.scalars(select(Job).where(Job.status == STATUS_OPEN, Job.source_ref.like(f"{prefix}%"))):
+            external_id = (job.source_ref or "")[len(prefix) :].rsplit(":", 1)[0]
+            if external_id.rsplit("/", 1)[0] in read and external_id not in listed:
+                job.status = STATUS_CLOSED
+                closed += 1
+    return closed
 
 
 def run(
@@ -593,6 +633,8 @@ def run(
     terms = _skill_terms(db)
     cap = settings.job_scout_new_per_specialization
     oldest = now - timedelta(days=settings.job_scout_max_age_days)
+    # Boards whose every advert is open today: age is no reason to skip one.
+    open_only = {s.name for s in sources if getattr(s, "lists_open_roles_only", False)}
 
     # The rows this run may meet again, read once: every row a ref could name,
     # and every open posting a course's students already see (the office's
@@ -649,7 +691,7 @@ def run(
         for (advert, kind), ref in zip(candidates, refs):
             # An advert past the age limit would be posted and closed by the
             # sweep in the same run, and take one of the day's places doing it.
-            if advert.posted_on is not None and advert.posted_on < oldest:
+            if advert.provider not in open_only and advert.posted_on is not None and advert.posted_on < oldest:
                 summary.stale += 1
                 continue
             if is_suspicious(advert):
@@ -679,7 +721,8 @@ def run(
                 summary.merged += 1
         summary.per_leaf[leaf.label] = summary.per_leaf.get(leaf.label, 0) + created
 
-    summary.closed = close_expired(db, now)
+    summary.withdrawn = close_withdrawn(db, sources)
+    summary.closed = close_expired(db, now) + summary.withdrawn
 
     if dry_run:
         db.rollback()
@@ -731,7 +774,9 @@ def _new_posting(
         degree_level=leaf.degree_level,
         location=(advert.location or "")[:200] or None,
         apply_url=advert.apply_url,
-        description=advert.description,
+        # A company's own feed sends its whole description, so the years it
+        # asks for can be judged; the row keeps the boards' length.
+        description=advert.description[:DESCRIPTION_MAX],
         required_skills=match_skills(f"{advert.title} {advert.description}", terms),
         posted_on=posted,
         closes_on=None,

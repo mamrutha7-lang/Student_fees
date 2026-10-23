@@ -42,7 +42,11 @@
               <strong>{{ j.title }}</strong>
               @if (credit(j.source); as by) {
                 <div class="dt-sub">
-                  <a [href]="by.href" target="_blank" rel="noopener">{{ by.label }}</a>
+                  @if (by.href) {
+                    <a [href]="by.href" target="_blank" rel="noopener">{{ by.label }}</a>
+                  } @else {
+                    {{ by.label }}
+                  }
                 </div>
               }
             </td>

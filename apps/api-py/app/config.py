@@ -486,6 +486,11 @@ class Settings(BaseSettings):
     adzuna_app_id: str = ""
     adzuna_app_key: str = ""
     jooble_api_key: str = ""
+    # The companies' own public job feeds (Greenhouse, Lever, SmartRecruiters;
+    # `job_sources.COMPANY_BOARDS`). They need NO key and no sign-up, so the
+    # switch is a flag rather than a key's presence. Off unless set, so a
+    # laptop running the job never reaches the internet by surprise.
+    job_scout_company_boards: bool = False
     # THREE STATES, `badge_mail_enabled`'s idiom: "true" or blank runs the agent
     # whenever a provider has a key, "false" stops it with the keys still in
     # place (the incident switch: one bad batch of postings must not need a
@@ -985,6 +990,7 @@ class Settings(BaseSettings):
         "interview_temperature",
         "auth_revocation_cache_seconds",
         "leave_mail_enabled",
+        "job_scout_company_boards",
         "job_scout_max_age_days",
         "job_scout_new_per_specialization",
         mode="before",
@@ -1194,11 +1200,12 @@ class Settings(BaseSettings):
 
         Only the exact word "false" stops it; anything else derives the answer
         from the keys, so the act of putting a key in the secret is the
-        decision to run it, the password door's argument again.
+        decision to run it, the password door's argument again. The company
+        feeds have no key, so `JOB_SCOUT_COMPANY_BOARDS=true` is that act.
         """
         if self.job_scout_enabled.strip().lower() == "false":
             return False
-        return self.adzuna_configured or self.jooble_configured
+        return self.adzuna_configured or self.jooble_configured or self.job_scout_company_boards
 
     @property
     def provisionable_email_domains(self) -> frozenset[str]:
