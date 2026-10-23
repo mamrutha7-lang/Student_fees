@@ -478,6 +478,28 @@ class Settings(BaseSettings):
     # reports nowhere and says so at the top of its log.
     sentry_jobs_dsn: str = ""
     sentry_interview_worker_dsn: str = ""
+    # The daily job agent (app/job_scout.py, 2026-10-23): fresher jobs and
+    # internships for every specialization, found on two official job-board
+    # APIs and posted to the Jobs board each morning. BLANK KEYS ARE OFF, one
+    # provider at a time: Adzuna needs both halves of its pair, Jooble one key.
+    # They are server-to-server credentials and never reach a page or a log.
+    adzuna_app_id: str = ""
+    adzuna_app_key: str = ""
+    jooble_api_key: str = ""
+    # THREE STATES, `badge_mail_enabled`'s idiom: "true" or blank runs the agent
+    # whenever a provider has a key, "false" stops it with the keys still in
+    # place (the incident switch: one bad batch of postings must not need a
+    # secret edited and a task redeployed to stop the next one).
+    job_scout_enabled: str = ""
+    # An agent posting is closed this many days after the employer posted it.
+    # A past `closes_on` hides nothing (app/jobs_visibility.py), and the
+    # providers rarely give one, so without this the board would only grow.
+    job_scout_max_age_days: int = 30
+    # At most this many NEW postings per specialization per run, newest first,
+    # so one busy morning cannot bury the office's own postings. Five is the
+    # owner's number (2026-10-23): kept for 30 days, that is at most about 150
+    # agent postings on one student's board, a table with no pagination.
+    job_scout_new_per_specialization: int = 5
 
     @property
     def sentry_environment_name(self) -> str:
@@ -963,6 +985,8 @@ class Settings(BaseSettings):
         "interview_temperature",
         "auth_revocation_cache_seconds",
         "leave_mail_enabled",
+        "job_scout_max_age_days",
+        "job_scout_new_per_specialization",
         mode="before",
     )
     @classmethod
@@ -1015,6 +1039,8 @@ class Settings(BaseSettings):
         "interview_retention_days",
         "interview_orphan_grace_seconds",
         "interview_audio_min_free_bytes",
+        "job_scout_max_age_days",
+        "job_scout_new_per_specialization",
     )
     @classmethod
     def _must_be_positive(cls, value: int, info: ValidationInfo) -> int:
@@ -1152,6 +1178,27 @@ class Settings(BaseSettings):
         if text == "false":
             return False
         return self.mail_configured
+
+    @property
+    def adzuna_configured(self) -> bool:
+        """Both halves of Adzuna's key pair are set. One half is no key."""
+        return bool(self.adzuna_app_id.strip() and self.adzuna_app_key.strip())
+
+    @property
+    def jooble_configured(self) -> bool:
+        return bool(self.jooble_api_key.strip())
+
+    @property
+    def job_scout_active(self) -> bool:
+        """Whether the daily job agent searches anything (app/job_scout.py).
+
+        Only the exact word "false" stops it; anything else derives the answer
+        from the keys, so the act of putting a key in the secret is the
+        decision to run it, the password door's argument again.
+        """
+        if self.job_scout_enabled.strip().lower() == "false":
+            return False
+        return self.adzuna_configured or self.jooble_configured
 
     @property
     def provisionable_email_domains(self) -> frozenset[str]:

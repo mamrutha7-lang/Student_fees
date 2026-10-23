@@ -16,7 +16,13 @@
  *                                       and alumni boards without touching the
  *                                       applications against it
  *   DELETE /api/admin/jobs/{id}        Remove — REFUSED 409 once anyone has
- *                                       applied, in the server's own words
+ *                                       applied, and for every posting the daily
+ *                                       job agent found (it would be posted
+ *                                       again the next morning), in the
+ *                                       server's own words
+ *   GET    /api/admin/jobs/scout-status the job agent's line over the grid:
+ *                                       when it last ran, what it posted and
+ *                                       closed, which boards have a key
  *   GET    /api/admin/criteria         the programme's placement criteria, which
  *                                       is where the form's two eligibility gates
  *                                       come from; read-only here
@@ -81,6 +87,7 @@ import {
   type JobPostingDraft,
   type JobPostingRow,
   type PlacementCriteriaApi,
+  type ScoutStatusApi,
 } from './job-posting-row';
 import {
   DEFAULT_JOBS_COLUMN,
@@ -147,6 +154,10 @@ export class AdminJobsSheetComponent {
   /** Why the Scope field is grey, in words, or null while it works. */
   readonly scopeUnavailable = signal<string | null>(null);
 
+  /** What the daily job agent last did, or null until (or unless) the
+   *  endpoint answers; the sheet is whole without it. */
+  readonly scoutStatus = signal<ScoutStatusApi | null>(null);
+
   readonly error = signal<string | null>(null);
   readonly flash = signal<string | null>(null);
   readonly busy = signal(false);
@@ -197,6 +208,7 @@ export class AdminJobsSheetComponent {
     void this.loadPostings();
     void this.loadCriteria();
     void this.loadCatalogueCourses();
+    void this.loadScoutStatus();
   }
 
   // ==================================================== derived state ====
@@ -322,6 +334,7 @@ export class AdminJobsSheetComponent {
     const posting = this.selectedPosting();
     if (posting === null) return false;
     if (posting.applicants > 0) return false;
+    if (posting.isAgentPosting) return false;
     return !this.busy();
   });
 
@@ -351,8 +364,37 @@ export class AdminJobsSheetComponent {
     if (posting.applicants > 0) {
       return 'Cannot be removed — students have applied';
     }
+    if (posting.isAgentPosting) {
+      return 'Found by the job agent — close it instead, or it is posted again tomorrow';
+    }
     return 'Remove from the sheet';
   });
+
+  /** The job agent's line over the grid: when it last ran and what it did, or
+   *  that it is off. Null hides the line, while the endpoint has not answered. */
+  readonly scoutLine = computed<string | null>(() => {
+    const scout = this.scoutStatus();
+    if (scout === null) return null;
+    const boards = scout.sources
+      .map((source) => `${source.name} ${source.configured ? 'on' : 'off'}`)
+      .join(' · ');
+    if (!scout.active) {
+      return scout.last_run_at === null
+        ? `Job agent off: no job board has a key (${boards})`
+        : `Job agent off · last ran ${this.formatRunAt(scout.last_run_at)}`;
+    }
+    if (scout.last_run_at === null) return `Job agent on, first run at 06:00 IST · ${boards}`;
+    const failed = Object.keys(scout.errors);
+    return [
+      `Job agent last ran ${this.formatRunAt(scout.last_run_at)}`,
+      `${scout.created ?? 0} new`,
+      `${scout.closed ?? 0} closed`,
+      boards,
+      ...(failed.length ? [`${failed.join(' and ')} failed`] : []),
+    ].join(' · ');
+  });
+
+  readonly scoutFailed = computed(() => Object.keys(this.scoutStatus()?.errors ?? {}).length > 0);
 
   /** The header button's two states, named here rather than branched in the
    *  template (09-coding-standards.md §2). */
@@ -551,6 +593,31 @@ export class AdminJobsSheetComponent {
       this.apiRows.set([]);
       this.error.set(failure instanceof Error ? failure.message : 'Could not reach the server.');
     }
+  }
+
+  /** The job agent's status line. Best-effort: a refusal or an error leaves
+   *  the line off and the sheet otherwise whole. */
+  private async loadScoutStatus(): Promise<void> {
+    try {
+      const response = await fetch(`${environment.apiBase}/admin/jobs/scout-status`, {
+        credentials: 'include',
+      });
+      if (!response.ok) return;
+      this.scoutStatus.set((await response.json()) as ScoutStatusApi);
+    } catch {
+      /* no line; nothing else on the sheet depends on it */
+    }
+  }
+
+  private formatRunAt(iso: string): string {
+    const at = new Date(iso);
+    if (Number.isNaN(at.getTime())) return 'at an unknown time';
+    return at.toLocaleString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 
   /** The two eligibility gates the form shows as inherited. `/criteria` checks

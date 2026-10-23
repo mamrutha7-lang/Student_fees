@@ -505,6 +505,16 @@ class CoreStack(Stack):
             # thing anyone looks at afterwards. Refused at synth, where it is
             # free, rather than discovered from a mail_logs table months later.
             raise ValueError("leaveMailEnabled needs sesFromAddress -- mail switched on with no transport records SENT for messages nobody receives")
+        # The daily job agent's two boards (app/job_scout.py, 2026-10-23). One
+        # flag per board, each OFF by default, and each set in cdk.json only
+        # AFTER that board's keys exist in the reep/external secret: a task
+        # definition that references a secret KEY the JSON does not hold
+        # fails to START, every task on it, the api included -- the
+        # `sentryJobsDsn` rule below. `harden_ecs` as well, because adding a
+        # secret registers a new task-definition revision and step 9a must
+        # leave the task definition byte-identical to the import mirror.
+        job_scout_adzuna = harden_ecs and flag("jobScoutAdzuna", False)
+        job_scout_jooble = harden_ecs and flag("jobScoutJooble", False)
         if ses_managed and not (ses_identity_domain and ses_configuration_set):
             raise ValueError("sesManaged needs both sesIdentityDomain and sesConfigurationSet -- the mirror must name what it is adopting")
         vault_lock_compliance = flag("vaultLockCompliance", False)
@@ -1910,6 +1920,14 @@ class CoreStack(Stack):
             # secret, never before. The synth test pins both shapes.
             if flag("sentryJobsDsn", False):
                 secrets["SENTRY_JOBS_DSN"] = ecs.Secret.from_secrets_manager(external_secret, "SENTRY_JOBS_DSN")
+            # The job agent's keys, on the same terms as the DSN above: see
+            # `job_scout_adzuna`. The execution role already reads the whole
+            # reep/external secret, so no grant changes.
+            if job_scout_adzuna:
+                secrets["ADZUNA_APP_ID"] = ecs.Secret.from_secrets_manager(external_secret, "ADZUNA_APP_ID")
+                secrets["ADZUNA_APP_KEY"] = ecs.Secret.from_secrets_manager(external_secret, "ADZUNA_APP_KEY")
+            if job_scout_jooble:
+                secrets["JOOBLE_API_KEY"] = ecs.Secret.from_secrets_manager(external_secret, "JOOBLE_API_KEY")
             c = td.add_container(
                 "api",
                 image=ecs.ContainerImage.from_registry(f"{api_image_repo}:{image_tag}"),
@@ -2318,6 +2336,52 @@ class CoreStack(Stack):
                     ),
                     input=json.dumps(
                         {"containerOverrides": [{"name": "api", "command": ["python", "-m", "app.leave_today_job"]}]},
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                ),
+            )
+
+        if job_scout_adzuna or job_scout_jooble:
+            # THE DAILY JOB AGENT, AT 06:00 IST (app/job_scout_job.py): fresher
+            # jobs and internships for every specialization, from Adzuna and
+            # Jooble, on the Jobs board before students open it.
+            #
+            # GATED ON A BOARD HAVING ITS KEYS IN THE TASK DEFINITION, the
+            # leave-today rule: a schedule with no key behind it is a job that
+            # wakes every morning, says "not configured" and posts nothing.
+            #
+            # 00:30 UTC is clear of every other clock here: the RDS backup
+            # (20:30-21:30) and maintenance (Sun 21:30-22:30) windows, the AWS
+            # Backup rule (19:00), the four nightly jobs (18:00-21:30) and the
+            # leave announcement (01:30). It reads the catalogue, writes a few
+            # dozen `jobs` rows and calls two public APIs through the NAT
+            # instance, the egress the Google JWKS fetch already uses.
+            #
+            # It reuses the api task definition and so the scheduler role's
+            # existing ecs:RunTask on `{project}-api:*`; no new IAM.
+            scheduler.CfnSchedule(
+                self,
+                "JobScoutSchedule",
+                name=f"{project}-job-scout-daily",
+                schedule_expression="cron(30 0 * * ? *)",  # 06:00 IST
+                flexible_time_window=scheduler.CfnSchedule.FlexibleTimeWindowProperty(mode="OFF"),
+                target=scheduler.CfnSchedule.TargetProperty(
+                    arn=cluster.cluster_arn,
+                    role_arn=scheduler_role.role_arn,
+                    ecs_parameters=scheduler.CfnSchedule.EcsParametersProperty(
+                        task_definition_arn=task_def.task_definition_arn,
+                        launch_type="FARGATE",
+                        network_configuration=scheduler.CfnSchedule.NetworkConfigurationProperty(
+                            awsvpc_configuration=scheduler.CfnSchedule.AwsVpcConfigurationProperty(
+                                subnets=[s.ref for s in private_subnets],
+                                security_groups=[api_sg.ref],
+                                assign_public_ip="DISABLED",
+                            )
+                        ),
+                    ),
+                    input=json.dumps(
+                        {"containerOverrides": [{"name": "api", "command": ["python", "-m", "app.job_scout_job"]}]},
                         separators=(",", ":"),
                         sort_keys=True,
                     ),

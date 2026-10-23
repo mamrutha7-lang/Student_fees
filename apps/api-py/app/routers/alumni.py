@@ -37,6 +37,7 @@ from ..models.archived_document import DocumentOwnerKind
 # B12.1/B12.2. The one answer to "which postings does this viewer see", shared
 # with the student feed — see `app/jobs_visibility.py`.
 from ..jobs_visibility import audience_for_alumnus, postings_for
+from ..job_scout import job_source
 
 router = APIRouter(prefix="/alumni", tags=["alumni"])
 
@@ -267,6 +268,8 @@ class JobSheetRowOut(BaseModel):
     required_skills: list[str]
     closes_on: str | None
     posted_on: str | None
+    #: `office`, `adzuna` or `jooble`; see `student.JobRowOut.source`.
+    source: str = "office"
 
 
 @router.get("/jobs", response_model=list[JobSheetRowOut])
@@ -301,6 +304,7 @@ def jobs_sheet(
             required_skills=j.required_skills or [],
             closes_on=j.closes_on.isoformat() if j.closes_on else None,
             posted_on=j.posted_on.isoformat() if j.posted_on else None,
+            source=job_source(j),
         )
         for j in db.scalars(postings_for(audience)).all()
     ]

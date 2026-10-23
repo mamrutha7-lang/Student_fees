@@ -11,6 +11,7 @@ import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
 import { environment } from '../../../../environments/environment';
+import { jobSourceCredit } from '../../../core/job-source';
 
 interface JobRow {
   id: string;
@@ -22,6 +23,8 @@ interface JobRow {
   required_skills: string[];
   closes_on: string | null;
   posted_on: string | null;
+  /** `office`, or the board the daily job agent found it on. */
+  source?: string;
 }
 
 @Component({
@@ -35,6 +38,8 @@ export class AlumniJobsComponent {
 
   readonly jobs = signal<JobRow[] | null>(null);
   readonly error = signal<string | null>(null);
+  /** "Jobs by Adzuna" under a posting the job agent found; null for the office's. */
+  readonly credit = jobSourceCredit;
 
   readonly filter = signal('');
   readonly filtered = computed(() => {

@@ -4,7 +4,8 @@ name: Ops task
 # workflow. The counterpart to deploy.yml's migration step, for the data
 # modules that are production-safe by design: app.grant_access (one staff row —
 # the operator who has to get in before anyone else), app.seed_roster (the
-# student batch), app.seed_kb (the assistant's knowledge base). It assumes the
+# student batch), app.seed_kb (the assistant's knowledge base), app.job_scout_job
+# (the daily job agent, run now rather than at 06:00 IST). It assumes the
 # same `reep-github-deploy` OIDC role, pinned to this repository and to main.
 #
 # The command is chosen from a FIXED menu, never typed: a free-text command
@@ -38,6 +39,8 @@ on:
           - seed-kb
           - seed-catalogue-dry-run
           - seed-catalogue
+          - job-scout-dry-run
+          - job-scout
           - grant-access
           - purge-people-dry-run
           - purge-people
@@ -178,6 +181,14 @@ jobs:
               CMD=$(jq -cn --arg c "$CATALOGUE_COLLEGE" '["python","-m","app.seed_catalogue","--college",$c]') ;;
             seed-catalogue)
               CMD=$(jq -cn --arg c "$CATALOGUE_COLLEGE" '["python","-m","app.seed_catalogue","--college",$c,"--apply"]') ;;
+            # The daily job agent, by hand: the same run the 06:00 IST
+            # schedule makes, for proving the keys work the day they are
+            # added rather than the next morning. The dry run asks both boards
+            # and judges every advert, then writes nothing.
+            job-scout-dry-run)
+              CMD=$(jq -cn '["python","-m","app.job_scout_job","--dry-run"]') ;;
+            job-scout)
+              CMD=$(jq -cn '["python","-m","app.job_scout_job"]') ;;
             purge-people-dry-run)
               CMD=$(jq -cn '["python","-m","app.purge_people"]') ;;
             purge-people)

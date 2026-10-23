@@ -717,8 +717,8 @@ through the API.
 | Apply link | `https://example.com/apply/<run id>` |
 
 The form cannot name required skills (it only carries them over from a
-duplicated posting), and a posting that names none is a 100% match for every
-student.
+duplicated posting), and a posting that names none reads "Skills not listed"
+for every student rather than a match percentage.
 
 The automated run answers the apply link inside the browser with a small
 local page, so it does not depend on example.com being reachable.
@@ -733,7 +733,7 @@ local page, so it does not depend on example.com being reachable.
 
 | # | After step | Expected result |
 |---|---|---|
-| ER-1 | 1 | The test posting's row reads "Eligible", a 100% skill match and "Not applied", with an Apply button. |
+| ER-1 | 1 | The test posting's row reads "Eligible", "Skills not listed" in the Skill match column and "Not applied", with an Apply button. |
 | ER-2 | 2 | The posting's apply link opens in a new tab. The row's status changes to "Applied", and its button reads "Applied" and is disabled. |
 | ER-3 | 3 | The row still reads "Applied": the application was recorded on the server. |
 

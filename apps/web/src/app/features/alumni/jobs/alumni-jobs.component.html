@@ -1,7 +1,7 @@
 <div class="dt-header">
   <div>
     <h1 class="dt-title">Jobs Sheet</h1>
-    <div class="dt-sub">Openings shared by the placement office — updated weekly.</div>
+    <div class="dt-sub">Openings from the placement office and the daily job agent.</div>
   </div>
 </div>
 
@@ -40,6 +40,11 @@
           <tr>
             <td>
               <strong>{{ j.title }}</strong>
+              @if (credit(j.source); as by) {
+                <div class="dt-sub">
+                  <a [href]="by.href" target="_blank" rel="noopener">{{ by.label }}</a>
+                </div>
+              }
             </td>
             <td>{{ j.company }}</td>
             <td>{{ j.degree_level }}</td>

@@ -67,6 +67,14 @@ QUERY_ALLOW = frozenset(
     }
 )
 
+#: Credentials a provider takes IN THE URL PATH, where `filter_query` cannot see
+#: them. Jooble's job search is `POST https://jooble.org/api/<key>`
+#: (app/job_sources.py), so the key is the last path segment, and the SDK's
+#: httpx integration writes that URL into a breadcrumb and an `http.client`
+#: span on every call the daily job agent makes. The match keeps the host and
+#: the path prefix so a trace still says which provider was slow.
+_SECRET_PATH_SEGMENTS = (re.compile(r"(jooble\.org/api/)[^/?#\s'\"]+", re.IGNORECASE),)
+
 #: Loggers whose records ARE the sensitive thing rather than a description of
 #: it. app/mail_transport.py logs the complete outbound message body at INFO
 #: when no transport is configured — the raw activation link, the raw reset
@@ -137,6 +145,13 @@ def filter_query(qs: str | None) -> str | None:
     return urlencode([(k, v if k in QUERY_ALLOW else FILTERED) for k, v in pairs])
 
 
+def redact_secret_paths(text: str) -> str:
+    """Blank every path segment `_SECRET_PATH_SEGMENTS` names, in any string."""
+    for pattern in _SECRET_PATH_SEGMENTS:
+        text = pattern.sub(lambda m: m.group(1) + FILTERED, text)
+    return text
+
+
 def filter_url(url: str | None) -> str | None:
     """The browser SDK sets request.url from location.href, so the SPA's
     /reset?token=... arrives here whole. The API's own URL extraction excludes
@@ -145,7 +160,10 @@ def filter_url(url: str | None) -> str | None:
 
     The fragment goes too. Angular routes by path, so nothing is lost — and a
     fragment is one more place a link could carry a secret."""
-    if not url or ("?" not in url and "#" not in url):
+    if not url:
+        return url
+    url = redact_secret_paths(url)
+    if "?" not in url and "#" not in url:
         return url
     try:
         parts = urlsplit(url)
@@ -277,6 +295,11 @@ def scrub_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any] | None = None) 
         for key in ("from", "to", "url"):
             if isinstance(data.get(key), str):
                 data[key] = filter_url(data[key])
+        # The httpx integration splits an outbound URL: `url` above has no
+        # query, and the raw query rides here. Adzuna takes its key pair as
+        # `?app_id=&app_key=`, so this is where an outbound credential sits.
+        if isinstance(data.get("http.query"), str):
+            data["http.query"] = filter_query(data["http.query"])
         for key in list(data):
             if isinstance(key, str) and _SENSITIVE_KEY.search(key):
                 data[key] = FILTERED
@@ -317,18 +340,42 @@ def scrub_event(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
     return event
 
 
+def _scrub_outbound_http_spans(event: dict[str, Any]) -> None:
+    """The one span this codebase does not write itself: the SDK's httpx
+    integration records every OUTBOUND call as an `http.client` span whose
+    description and `url` carry the path and whose `http.query` carries the raw
+    query string. Only those spans are touched, so the cost on the interview's
+    couple of hundred spans is one string comparison each."""
+    spans = event.get("spans")
+    if not isinstance(spans, list):
+        return
+    for span in spans:
+        if not isinstance(span, dict) or not str(span.get("op") or "").startswith("http"):
+            continue
+        if isinstance(span.get("description"), str):
+            span["description"] = redact_secret_paths(span["description"])
+        data = span.get("data")
+        if isinstance(data, dict):
+            if isinstance(data.get("url"), str):
+                data["url"] = filter_url(data["url"])
+            if isinstance(data.get("http.query"), str):
+                data["http.query"] = filter_query(data["http.query"])
+
+
 def scrub_transaction(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """before_send_transaction. A sampled 200 carries request data too, and the
     interview transaction carries a couple of hundred spans — so this touches
-    the request block, the breadcrumbs and the user, and does not walk spans:
-    span data on this codebase is names, counts and identifiers by contract
-    (tests/test_tracing.py pins it)."""
+    the request block, the breadcrumbs and the user, and walks only the
+    OUTBOUND http spans: span data this codebase writes itself is names, counts
+    and identifiers by contract (tests/test_tracing.py pins it), and the SDK's
+    httpx spans are the one kind it does not write."""
     if not isinstance(event, dict):
         return event
     request = event.get("request")
     if isinstance(request, dict):
         strip_request_secrets(request)
     _scrub_breadcrumbs_in_event(event)
+    _scrub_outbound_http_spans(event)
     event.pop("user", None)
     return event
 

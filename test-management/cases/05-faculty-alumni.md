@@ -1272,7 +1272,7 @@ None beyond the seeded postings.
 
 | # | After step | Expected result |
 |---|---|---|
-| ER-1 | 1 | The page `/alumni/jobs` is headed "Jobs Sheet", with "Openings shared by the placement office — updated weekly." and a "Search role, company or location" box. |
+| ER-1 | 1 | The page `/alumni/jobs` is headed "Jobs Sheet", with "Openings from the placement office and the daily job agent." and a "Search role, company or location" box. |
 | ER-2 | 1 | The table's columns are Role, Company, Level, Location, Skills, Closes and an unlabelled action column. There is no Eligibility or Skill match column and no match percentage anywhere: those are computed from a student's marks and skills, which an alumnus does not have. |
 | ER-3 | 1 | The three seeded postings are listed with their company, level, location and skill chips, and "—" under Closes. Financial Analyst and BI Developer each have an Apply link to the employer's page; Junior Accountant has none. |
 

@@ -69,6 +69,7 @@ from ..criteria import (
 # with the alumni board — see `app/jobs_visibility.py` for why the two feeds
 # must not each own a copy of that answer.
 from ..jobs_visibility import audience_for_student, postings_for
+from ..job_scout import job_source
 from ..models.student_profile import StudentProfile
 from ..models.resume import Resume, ResumeStatus
 from ..models.schedule import ScheduleItem
@@ -1153,12 +1154,21 @@ class JobRowOut(BaseModel):
     location: str | None
     apply_url: str | None
     required_skills: list[str]
-    match_percent: float
+    #: None when the posting lists no skills. It used to be 100.0, so every
+    #: daily-agent advert (whose text rarely names a catalogue skill) told the
+    #: student they were a perfect fit; "Skills not listed" is the true answer
+    #: and the owner's choice for every posting, the office's included
+    #: (2026-10-23).
+    match_percent: float | None
     eligible: bool
     reasons: list[str]
     applied: bool
     closes_on: str | None
     posted_on: str | None
+    #: `office`, or the board the daily job agent found it on (`adzuna`,
+    #: `jooble`); the screen prints Adzuna's attribution from it, which that
+    #: board's terms require on every advert shown.
+    source: str = "office"
 
 
 @router.get("/jobs", response_model=list[JobRowOut])
@@ -1223,7 +1233,7 @@ def my_jobs(
     audience = audience_for_student(db, student_id)
     for j in db.scalars(postings_for(audience)).all():
         required = set(j.required_skills or [])
-        match = round(100 * len(skill_slugs & required) / len(required), 1) if required else 100.0
+        match = round(100 * len(skill_slugs & required) / len(required), 1) if required else None
         # Per-posting override wins; else fall back to the active criteria.
         # The per-posting override still wins; what changed is what it falls
         # back TO. A posting that names no gate is governed by the criteria that
@@ -1257,6 +1267,7 @@ def my_jobs(
                 applied=j.id in applied_ids,
                 closes_on=j.closes_on.isoformat() if j.closes_on else None,
                 posted_on=j.posted_on.isoformat() if j.posted_on else None,
+                source=job_source(j),
             )
         )
     return rows
