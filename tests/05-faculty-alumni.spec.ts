@@ -2394,7 +2394,7 @@ test.describe('Faculty and alumni', () => {
         'TC-428 ER-1: headed "Jobs Sheet"',
       ).toBeVisible();
       await expect(
-        page.getByText('Openings shared by the placement office — updated weekly.'),
+        page.getByText('Openings from the placement office and the daily job agent.'),
         'TC-428 ER-1: with its sub-heading',
       ).toBeVisible();
       await expect(

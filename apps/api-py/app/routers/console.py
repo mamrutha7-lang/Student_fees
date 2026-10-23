@@ -11,7 +11,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy import true as sa_true
 from sqlalchemy.orm import Session
 
-from .. import batch_labels
+from .. import batch_labels, job_scout
+from ..config import settings
 from ..db import get_db
 from ..identity import get_current_session
 
@@ -670,6 +671,10 @@ class JobSheetOut(BaseModel):
     # `closes_on`, which the grid already reads and which answers the other
     # question — see `close_job` below.
     status: str
+    # `office` for a posting typed on this sheet, else the board the daily job
+    # agent found it on (`adzuna`, `jooble`) — app/job_scout.py. An agent
+    # posting is closed, never removed: see `delete_job`.
+    source: str = "office"
 
 
 @router.get("/jobs", response_model=list[JobSheetOut])
@@ -703,6 +708,48 @@ def jobs_sheet(
     ).all()
     labels = _spine_labels(db, rows)
     return [_job_sheet_row(j, counts.get(j.id, 0), labels) for j in rows]
+
+
+class ScoutSourceOut(BaseModel):
+    key: str
+    name: str
+    configured: bool
+
+
+class ScoutStatusOut(BaseModel):
+    """What the daily job agent last did, for the line at the top of the sheet.
+
+    `last_run_at` NULL means it has never written a run on this deployment,
+    which is a different sentence from a run that found nothing; and
+    `active` false with a run on record is an agent somebody switched off."""
+
+    active: bool
+    sources: list[ScoutSourceOut]
+    last_run_at: datetime | None
+    created: int | None
+    closed: int | None
+    errors: dict[str, str]
+
+
+@router.get("/jobs/scout-status", response_model=ScoutStatusOut)
+def jobs_scout_status(
+    session: dict = Depends(get_current_session),
+    db: Session = Depends(get_db),
+) -> ScoutStatusOut:
+    """The latest run's receipt (one SYSTEM audit row per run) and which boards
+    have a key here. The counts are programme-wide by construction, a run being
+    one act over every college, and they are numbers, never a posting."""
+    require_capability(db, session, "admin.jobs")
+    row = job_scout.latest_run(db)
+    body = (row.after_json or {}) if row else {}
+    return ScoutStatusOut(
+        active=settings.job_scout_active,
+        sources=[ScoutSourceOut(**source) for source in job_scout.status_sources()],
+        last_run_at=row.occurred_at if row else None,
+        created=body.get("created") if row else None,
+        closed=body.get("closed") if row else None,
+        errors={str(k): str(v) for k, v in (body.get("errors") or {}).items()},
+    )
 
 
 def _spine_labels(db: Session, rows) -> dict[str, str]:
@@ -757,6 +804,7 @@ def _job_sheet_row(j: Job, applicants: int, labels: dict[str, str] | None = None
         course_name=labels.get(j.course_id) if j.course_id else None,
         tracks=list(j.tracks or []),
         status=j.status,
+        source=job_scout.job_source(j),
     )
 
 
@@ -871,6 +919,18 @@ def delete_job(
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Posting not found.")
+    # An agent posting is CLOSED, never removed. Its row is the only memory
+    # that the advert was seen; deleting it would let the next morning's run
+    # post the same advert again, which is the opposite of what the office
+    # meant by pressing Remove.
+    if job_scout.is_agent_posting(job):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The job agent found this posting, so it cannot be removed: the agent would "
+                "post it again tomorrow. Close it instead and it stays off both boards."
+            ),
+        )
     applicants = (
         db.scalar(
             select(func.count()).select_from(JobApplication).where(JobApplication.job_id == job_id)

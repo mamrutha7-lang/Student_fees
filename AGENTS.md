@@ -1526,6 +1526,23 @@ FINALISED version refuses regenerate and delete (409) until it is unlocked.
 be printed under it. `tests/test_resume_template.py` pins the order and the
 CRUD walk.
 
+## The daily job agent (2026-10-23)
+
+**Every morning at 06:00 IST, `python -m app.job_scout_job` posts fresher jobs and internships for every specialization to the Jobs board, with nobody's hand on it.** The owner asked for exactly that. `docs/job-scout.md` is the runbook (keys, flags, deploy, how to check a morning), `app/job_scout.py` decides everything a run does, `app/job_sources.py` is the two boards, and the schedule is `reep-job-scout-daily` in `infra/cdk/reep_core/stack.py`. **OFFICIAL APIs ONLY, Adzuna and Jooble, all of India.** LinkedIn and Naukri forbid scraping and block it within days, which would make the morning run a thing that quietly stops working. Adzuna's terms ask for "Jobs by Adzuna" with a link on every advert shown, so `source` rides on all three job rows (`office` / `adzuna` / `jooble`) and `core/job-source.ts` prints the credit.
+
+- **ONE ROW PER (ADVERT, COURSE), and that is what makes targeting exact.** `visible_clauses` skips the track clause for a student with no track, and a student on a course with no specialization (BGSCET's Digital Marketing and Logistics MBAs) has none. So a row with its course widened to NULL would reach those students with adverts found for HR. `source_ref` (unique, and unused until now) is `<board>:<advert id>:<course id>`, so **no migration was needed**.
+  - The same advert found for two specializations of one course is one row with both codes.
+  - An advert on both boards, or one the office already posted, is not posted again, and that dedupe also reads rows closed in the last 90 days.
+  - A closed posting is never reopened.
+- **An agent posting is CLOSED, never removed.** `DELETE /admin/jobs/{id}` answers 409 for one, and the sheet greys Remove with the reason when one is ticked (the same way it does for a posting with applicants): a deleted row is forgotten and the next morning would post the same advert again. The age sweep closes agent postings older than `JOB_SCOUT_MAX_AGE_DAYS` (30) and never touches the office's.
+- **BOTH BOARDS PUT A KEY IN THE URL, and three layers keep it out of logs and Sentry.** Adzuna takes its key in the query, Jooble in the path.
+  - httpx logs every request at INFO with the whole URL, and the job turns INFO on. A `logging.Filter` on the `httpx` logger in `job_sources.py` drops the query and blanks Jooble's path. **Writing the end-to-end test is how this was found**: it passed alone and failed beside the DB suite, because only there was the root logger at INFO.
+  - `telemetry_scrub.py` filters `http.query` on breadcrumbs and on the SDK's `http.client` spans, and `_SECRET_PATH_SEGMENTS` blanks the Jooble path.
+  - Every failure is re-raised as `SourceError` naming the board and the status, `from None`.
+  - `tests/test_job_sources.py` proves all of it against the real SDK, and each test fails with its layer removed.
+- **The keys are opt-in per board and gated on `harden_ecs`**: `jobScoutAdzuna` / `jobScoutJooble` in `cdk.json`, set only AFTER the keys are in `reep/external`, for `sentryJobsDsn`'s reason (a task naming a missing secret key does not start, the api included). The schedule exists only when a board is on. `JOB_SCOUT_ENABLED=false` is the incident switch with the keys left in place.
+- **Rule 1 by shape:** a search carries a catalogue phrase, a location and the key, and `job_sources.py` imports no model (a test reads its imports). Each run writes one `job_scout_run` audit row with `actor_type="SYSTEM"`, and `GET /api/admin/jobs/scout-status` reads it for the sheet's status line.
+
 ## The Skills & Badge dashboard (2026-08)
 
 Implements the "REEP Student Skills & Badge Dashboard Developer Framework"

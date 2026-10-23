@@ -183,6 +183,14 @@ export const JOBS_COLUMNS: ColDef<JobPostingRow>[] = [
       'Whether the posting is on the student and alumni boards. Only “Withdrawn” takes it off them — the closing date does not, so “Past deadline” means it is still listed',
   },
   {
+    colId: 'source',
+    field: 'sourceLabel',
+    headerName: 'Source',
+    minWidth: 120,
+    headerTooltip:
+      'Office for a posting typed here; Adzuna or Jooble for one the daily job agent found. An agent posting can be closed but not removed',
+  },
+  {
     colId: 'college',
     field: 'collegeLabel',
     headerName: 'College',

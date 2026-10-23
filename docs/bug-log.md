@@ -26,6 +26,13 @@ Entry format:
 
 ## Open
 
+- **2026-10-23 — The student Jobs page promises job-alert emails nothing
+  sends.** Its subtitle reads "auto alert emailed to matching students", but
+  the only `job-alert` mail in the codebase is a demo row written by
+  `app/seed.py`; no job or endpoint sends one. Found while building the daily
+  job agent, which changed the same line's "Updated weekly" to "Updated every
+  morning" and left the alert claim for the owner to decide: build the alert,
+  or take the words off.
 - **2026-10-14 — Two Main Admin screens still send a picked file by
   reference.** The catalogue upload (`features/admin/catalogue`) and the
   spreadsheet import (`features/admin/imports`) do not copy the file at pick

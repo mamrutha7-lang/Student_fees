@@ -35,6 +35,7 @@ import { FormsModule } from '@angular/forms';
 
 import { environment } from '../../../../environments/environment';
 import { failedReadMessage } from '../../../core/feature-refusal';
+import { jobSourceCredit } from '../../../core/job-source';
 
 type Tone = 'good' | 'warn' | 'risk' | 'neutral';
 
@@ -56,6 +57,8 @@ interface JobRow {
   applied: boolean;
   closes_on: string | null;
   posted_on: string | null;
+  /** `office`, or the board the daily job agent found it on. */
+  source?: string;
 }
 
 /** Resolved deadline view for a card. */
@@ -80,6 +83,8 @@ export class JobsComponent {
 
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
+  /** "Jobs by Adzuna" under a posting the job agent found; null for the office's. */
+  readonly credit = jobSourceCredit;
 
   // --- opportunity filters (client-side over the fetched list) ---
   readonly filterElig = signal<EligFilter>('all');

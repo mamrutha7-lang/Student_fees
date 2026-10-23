@@ -133,6 +133,15 @@
   font-size: 14px;
   font-weight: 800;
 }
+/* The board a job-agent posting came from. Adzuna's terms ask for the words
+   and the link on every advert shown; it stays quiet beside the company. */
+.source-credit {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: underline;
+}
 .loc {
   display: flex;
   align-items: center;

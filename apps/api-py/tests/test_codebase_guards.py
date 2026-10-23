@@ -755,6 +755,7 @@ def test_sentry_never_ships_local_variables_or_request_bodies() -> None:
         "retention_job.py",
         "alerts_job.py",
         "leave_today_job.py",
+        "job_scout_job.py",
         "voice_platform/queue/worker.py",
     ):
         text = (APP / module).read_text(encoding="utf-8")
@@ -784,6 +785,8 @@ def test_every_reporting_process_names_its_own_service_and_its_own_dsn() -> None
         # The morning "<name> is on leave today" announcement (2026-09-24),
         # the third scheduled job in the same project for the same reason.
         "leave_today_job.py": ("SERVICE_JOBS", "settings.sentry_jobs_dsn"),
+        # The daily job agent (2026-10-23), the fourth.
+        "job_scout_job.py": ("SERVICE_JOBS", "settings.sentry_jobs_dsn"),
         "voice_platform/queue/worker.py": ("SERVICE_INTERVIEW_WORKER", "settings.sentry_interview_worker_dsn"),
     }
     for module, (service, dsn_setting) in expectations.items():
@@ -791,7 +794,13 @@ def test_every_reporting_process_names_its_own_service_and_its_own_dsn() -> None
         assert f"init_sentry({service}, {dsn_setting})" in text, (
             f"app/{module} must call init_sentry({service}, {dsn_setting}) — see this test's docstring"
         )
-    for module in ("retention_job.py", "alerts_job.py", "leave_today_job.py", "voice_platform/queue/worker.py"):
+    for module in (
+        "retention_job.py",
+        "alerts_job.py",
+        "leave_today_job.py",
+        "job_scout_job.py",
+        "voice_platform/queue/worker.py",
+    ):
         text = (APP / module).read_text(encoding="utf-8")
         assert "settings.sentry_dsn)" not in text and "settings.sentry_dsn " not in text, (
             f"app/{module} reads the api's DSN; it must read its own"
@@ -956,6 +965,24 @@ def test_the_retention_monitor_keeps_the_same_clock_as_the_scheduler() -> None:
     assert anchor > 0, "the retention schedule's name moved; update this guard"
     match = re.search(r'schedule_expression="cron\((\d+) (\d+) \* \* \? \*\)"', stack[anchor:])
     assert match, "the retention schedule moved or changed shape; update this guard"
+    minute, hour = match.group(1), match.group(2)
+    assert MONITOR_CONFIG["schedule"] == {"type": "crontab", "value": f"{minute} {hour} * * *"}
+    assert MONITOR_CONFIG["timezone"] == "Etc/UTC"
+    for key in ("checkin_margin", "max_runtime", "failure_issue_threshold", "recovery_threshold"):
+        assert key in MONITOR_CONFIG, f"{key} is missing — a camelCase key is accepted and ignored by the ingest"
+
+
+def test_the_job_agent_monitor_keeps_the_same_clock_as_the_scheduler() -> None:
+    """The retention guard's twin for the daily job agent (2026-10-23): its
+    Sentry monitor is upserted from app/job_scout_job.py and its schedule is
+    `reep-job-scout-daily` in the stack, so the two clocks are compared here."""
+    from app.job_scout_job import MONITOR_CONFIG
+
+    stack = (REPO / "infra" / "cdk" / "reep_core" / "stack.py").read_text(encoding="utf-8")
+    anchor = stack.find("-job-scout-daily")
+    assert anchor > 0, "the job agent's schedule's name moved; update this guard"
+    match = re.search(r'schedule_expression="cron\((\d+) (\d+) \* \* \? \*\)"', stack[anchor:])
+    assert match, "the job agent's schedule moved or changed shape; update this guard"
     minute, hour = match.group(1), match.group(2)
     assert MONITOR_CONFIG["schedule"] == {"type": "crontab", "value": f"{minute} {hour} * * *"}
     assert MONITOR_CONFIG["timezone"] == "Etc/UTC"

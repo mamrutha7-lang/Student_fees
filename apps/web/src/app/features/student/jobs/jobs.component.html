@@ -2,7 +2,7 @@
   <div class="dt-header">
     <div>
       <h1 class="dt-title">Jobs</h1>
-      <div class="dt-sub">Updated weekly · auto alert emailed to matching students</div>
+      <div class="dt-sub">Updated every morning · auto alert emailed to matching students</div>
     </div>
   </div>
 
@@ -81,6 +81,9 @@
               <td>
                 <div class="role-title">{{ row.title }}</div>
                 <div class="dt-sub">{{ row.company }}</div>
+                @if (credit(row.source); as by) {
+                  <a class="source-credit" [href]="by.href" target="_blank" rel="noopener">{{ by.label }}</a>
+                }
               </td>
               <td>
                 <div class="loc">

@@ -69,6 +69,7 @@ from ..criteria import (
 # with the alumni board — see `app/jobs_visibility.py` for why the two feeds
 # must not each own a copy of that answer.
 from ..jobs_visibility import audience_for_student, postings_for
+from ..job_scout import job_source
 from ..models.student_profile import StudentProfile
 from ..models.resume import Resume, ResumeStatus
 from ..models.schedule import ScheduleItem
@@ -1159,6 +1160,10 @@ class JobRowOut(BaseModel):
     applied: bool
     closes_on: str | None
     posted_on: str | None
+    #: `office`, or the board the daily job agent found it on (`adzuna`,
+    #: `jooble`); the screen prints Adzuna's attribution from it, which that
+    #: board's terms require on every advert shown.
+    source: str = "office"
 
 
 @router.get("/jobs", response_model=list[JobRowOut])
@@ -1257,6 +1262,7 @@ def my_jobs(
                 applied=j.id in applied_ids,
                 closes_on=j.closes_on.isoformat() if j.closes_on else None,
                 posted_on=j.posted_on.isoformat() if j.posted_on else None,
+                source=job_source(j),
             )
         )
     return rows

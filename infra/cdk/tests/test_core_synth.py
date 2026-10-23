@@ -1427,6 +1427,78 @@ def test_the_leave_today_schedule_exists_only_where_leave_mail_can_be_sent(impor
     assert LEAVE_TODAY_SCHEDULE not in _schedule_names(_core("harden", hardenEcs="false", leaveMailEnabled=True))
 
 
+JOB_SCOUT_SCHEDULE = "reep-job-scout-daily"
+JOB_SCOUT_SECRETS = {"ADZUNA_APP_ID", "ADZUNA_APP_KEY", "JOOBLE_API_KEY"}
+
+
+def _job_scout(**flags: object) -> Template:
+    return _core(
+        "harden",
+        wafWebAclArn="arn:aws:wafv2:us-east-1:123456789012:global/webacl/reep-edge/abc",
+        drVaultArn="arn:aws:backup:ap-southeast-1:123456789012:backup-vault:reep-vault-dr",
+        sesIdentityDomain="bgscet.ac.in",
+        sesFromAddress="reep@bgscet.ac.in",
+        alertEmail="ops@bgscet.ac.in",
+        **flags,
+    )
+
+
+def test_the_job_agent_schedule_runs_the_agent_before_students_open_the_board() -> None:
+    """06:00 IST, so the morning's postings are there before the day starts,
+    clear of the RDS windows and of every other job's clock. A schedule naming
+    the wrong module is a green job that posts nothing."""
+    t = _job_scout(jobScoutAdzuna="true", jobScoutJooble="true")
+    res = t.to_json()["Resources"]
+    schedules = [r for r in res.values() if r["Type"] == "AWS::Scheduler::Schedule"]
+    sched = next(r for r in schedules if r["Properties"]["Name"] == JOB_SCOUT_SCHEDULE)
+    assert json.loads(sched["Properties"]["Target"]["Input"]) == {
+        "containerOverrides": [{"name": "api", "command": ["python", "-m", "app.job_scout_job"]}]
+    }
+    assert sched["Properties"]["FlexibleTimeWindow"] == {"Mode": "OFF"}
+
+    utc = _cron_minutes(sched["Properties"]["ScheduleExpression"])
+    ist = (utc + 5 * 60 + 30) % (24 * 60)
+    assert 5 * 60 <= ist <= 7 * 60, f"runs at {ist // 60:02d}:{ist % 60:02d} IST, not before the day starts"
+
+    db = next(r for r in res.values() if r["Type"] == "AWS::RDS::DBInstance")
+    to_min = lambda hm: int(hm[:2]) * 60 + int(hm[3:])
+    start, end = db["Properties"]["PreferredBackupWindow"].split("-")
+    assert not (to_min(start) <= utc <= to_min(end)), "lands inside the RDS backup window"
+    others = {
+        _cron_minutes(r["Properties"]["ScheduleExpression"])
+        for r in schedules
+        if r["Properties"]["Name"] != JOB_SCOUT_SCHEDULE
+    }
+    assert utc not in others, "shares a minute with another job and contends for the same capacity"
+
+
+def test_the_job_agent_keys_and_schedule_are_opt_in_one_board_at_a_time(imported: Template, hardened: Template) -> None:
+    """A task definition naming a secret KEY the JSON does not hold fails to
+    START, the api included, so each board's keys are referenced only through
+    its own flag, set after the key is in reep/external. Without a key the
+    schedule would wake every morning and post nothing, so it goes with them;
+    and none of it rides in the import mirror or in step 9a."""
+    for template in (imported, hardened):
+        assert not (JOB_SCOUT_SECRETS & _container_secret_names(template))
+        assert JOB_SCOUT_SCHEDULE not in _schedule_names(template)
+
+    adzuna = _job_scout(jobScoutAdzuna="true")
+    assert JOB_SCOUT_SECRETS & _container_secret_names(adzuna) == {"ADZUNA_APP_ID", "ADZUNA_APP_KEY"}
+    assert JOB_SCOUT_SCHEDULE in _schedule_names(adzuna)
+    adzuna.has_resource_properties(
+        "AWS::ECS::TaskDefinition",
+        {"ContainerDefinitions": Match.array_with([Match.object_like({"Secrets": Match.array_with([Match.object_like({"Name": "ADZUNA_APP_KEY", "ValueFrom": Match.string_like_regexp(":ADZUNA_APP_KEY::$")})])})])},
+    )
+
+    jooble = _job_scout(jobScoutJooble="true")
+    assert JOB_SCOUT_SECRETS & _container_secret_names(jooble) == {"JOOBLE_API_KEY"}
+    assert JOB_SCOUT_SCHEDULE in _schedule_names(jooble)
+
+    step_9a = _job_scout(hardenEcs="false", jobScoutAdzuna="true", jobScoutJooble="true")
+    assert not (JOB_SCOUT_SECRETS & _container_secret_names(step_9a))
+    assert JOB_SCOUT_SCHEDULE not in _schedule_names(step_9a)
+
+
 def test_the_interview_audio_directory_is_named_and_not_inferred(hardened: Template) -> None:
     """`interview_audio._store_root()`'s fallback derives the audio store from
     UPLOAD_DIR's PARENT, so it lands on the EFS mount only because UPLOAD_DIR
