@@ -1129,11 +1129,11 @@ test.describe('Student: profile, jobs and tools', () => {
     try {
       await test.step('1. Open /student/jobs', async () => {
         await page.goto('/student/jobs');
-        await expect(cells, 'TC-314 ER-1: eligible, a 100% match, not applied').toHaveText([
+        await expect(cells, 'TC-314 ER-1: eligible, skills not listed, not applied').toHaveText([
           new RegExp(title),
           /E2E Town/,
           /Eligible\s*$/,
-          /100%/,
+          /Skills not listed/,
           /Not applied\s*$/,
           /Apply\s*$/,
         ]);

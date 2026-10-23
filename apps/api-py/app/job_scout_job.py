@@ -79,14 +79,21 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             with SessionLocal() as db:
                 summary = job_scout.run(db, now=now, sources=sources, dry_run=args.dry_run)
+            if summary.busy:
+                # Not a failure: the other run is doing this morning's work.
+                log.info("Job agent: another run is in progress, so this one did nothing.")
+                return 0
             log.info(
-                "Job agent %s: %d stream(s), %d search(es), %d advert(s) found, %d fresher "
-                "role(s) kept, %d posted, %d widened to another specialization, %d already "
-                "on the board, %d over the daily limit, %d closed as expired. Per stream: %s.",
+                "Job agent %s: %d stream(s), %d search(es), %d advert(s) found, %d too old, "
+                "%d suspicious, %d fresher role(s) kept, %d posted, %d widened to another "
+                "specialization, %d already on the board, %d over the daily limit, %d closed. "
+                "Per stream: %s.",
                 "dry run (nothing written)" if summary.dry_run else "run complete",
                 summary.leaves,
                 summary.calls,
                 summary.found,
+                summary.stale,
+                summary.suspicious,
                 summary.kept,
                 summary.created,
                 summary.merged,

@@ -741,7 +741,7 @@ interface JobRow {
   degree_level: Level;
   apply_url: string | null;
   required_skills: string[];
-  match_percent: number;
+  match_percent: number | null;
   ...
 }
 ```

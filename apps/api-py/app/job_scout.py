@@ -17,8 +17,10 @@ WHAT ONE RUN DOES, in order:
      falling back to the leaf's own name) and asks every configured board for
      a fresher job and an internship per phrase. A phrase two leaves share is
      asked once.
-  3. Keeps only what `is_fresher_role` admits, and posts each advert ONCE PER
-     COURSE, aimed at exactly that course and that specialization.
+  3. Skips an advert older than the age limit, one `is_suspicious` reads as a
+     scam, and one `is_fresher_role` does not admit, and posts each of the
+     rest ONCE PER COURSE, aimed at exactly that course and that
+     specialization.
   4. Closes its own postings once they are `job_scout_max_age_days` old.
   5. Writes one audit row saying what it did, which is what the Jobs sheet's
      status line reads.
@@ -54,7 +56,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -123,19 +125,35 @@ _SENIOR_TITLE = re.compile(
     r"architect|general manager|gm)\b",
     re.IGNORECASE,
 )
-#: A bare "manager" is an experienced hire; an assistant manager is the role an
-#: MBA fresher is most often offered in India, so that one stays.
+#: A bare "manager" is an experienced hire. An assistant manager is the role an
+#: MBA fresher is most often offered in India, and a bank's relationship
+#: manager is the commonest campus offer for a Finance or Marketing MBA, so
+#: those two stay.
 _MANAGER = re.compile(r"\bmanager\b", re.IGNORECASE)
-_ASSISTANT_MANAGER = re.compile(r"\b(assistant|asst\.?)\s+manager\b", re.IGNORECASE)
+_FRESHER_MANAGER = re.compile(r"\b(assistant|asst\.?|relationship)\s+manager\b", re.IGNORECASE)
 #: "2-5 years of experience", "3+ yrs exp", "experience: minimum 2 years". The
 #: LOWER bound is what is read: "0-2 years" is a fresher role and "2+" is not.
 _YEARS = r"(\d{1,2})\s*(?:\+|plus)?\s*(?:(?:-|–|to)\s*\d{1,2})?\s*(?:years?|yrs?)"
+_UNIT = r"\s*(?:years?|yrs?)\b"
 _EXPERIENCE = (
     re.compile(_YEARS + r"(?:\s+of)?(?:\s+\w+){0,2}?\s+(?:experience|exp)\b", re.IGNORECASE),
     re.compile(
         r"\b(?:experience|exp)\s*(?:of|:|-)?\s*(?:minimum|min\.?|at least)?\s*" + _YEARS,
         re.IGNORECASE,
     ),
+    # Adverts that never say "experience": "minimum 3 years in analytics",
+    # "3 to 5 years in banking", "2-4 yrs in FMCG sales", "5+ years". A bare
+    # "2 years" is NOT read, because "a 2 years MBA" is a qualification.
+    re.compile(r"\b(?:minimum|min\.?|at\s*least)\s*(?:of\s+)?(\d{1,2})\s*\+?" + _UNIT, re.IGNORECASE),
+    re.compile(r"\b(\d{1,2})\s*(?:-|–|to)\s*\d{1,2}" + _UNIT, re.IGNORECASE),
+    re.compile(r"\b(\d{1,2})\s*(?:\+|plus)" + _UNIT, re.IGNORECASE),
+)
+#: "Age 21 to 28 years" is the commonest line on an Indian fresher advert and
+#: is not experience; it is removed before the patterns above read the text.
+_AGE = re.compile(
+    r"\bage\b[^.;\n]{0,25}?\d{1,2}\s*(?:-|–|to)\s*\d{1,2}" + _UNIT + r"(?:\s+(?:of\s+age|old))?"
+    r"|\b\d{1,2}\s*(?:-|–|to)\s*\d{1,2}" + _UNIT + r"\s+(?:of\s+age|old)\b",
+    re.IGNORECASE,
 )
 #: An advert asking for at most this many years is still a fresher role: one
 #: year is what a campus hire with an internship behind them is asked for.
@@ -143,6 +161,58 @@ MAX_FRESHER_YEARS = 1
 
 #: How far back a closed posting still counts as the same advert.
 DUPLICATE_WINDOW = timedelta(days=90)
+
+#: The run holds this transaction-level advisory lock, so a second run started
+#: while one is going (the Ops task pressed at 06:00) finds it taken and stops
+#: quietly, instead of colliding on `source_ref`'s unique index at COMMIT and
+#: failing with an alert. Outside int4 on purpose: the interview's locks are
+#: `hashtext(...)`, an int4, so the two can never share a key.
+RUN_LOCK_KEY = 0x6A6F6273636F7574  # "jobscout"
+
+#: An advert written to take a student's money, or the "data entry / work from
+#: home / earn per day" family that is the same trick with a softer opening.
+#: Jooble aggregates small sites where these are common, and the portal is the
+#: college's own: a student reasonably reads a posting there as checked. The
+#: owner chose a STRICT filter (2026-10-23): a real employer never charges a
+#: candidate, so the cost of a false positive is one advert nobody sees.
+_MONEY_ASK = re.compile(
+    r"\b(?:registration|processing|security|joining|training|application|interview|enrol?ment|"
+    r"onboarding|kit|verification)\s+(?:fees?|charges?|deposit|amount)\b"
+    r"|\b(?:security|refundable|caution)\s+deposit\b"
+    r"|\bpay\s+(?:a\s+)?(?:refundable\s+)?deposit\b"
+    r"|\bdeposit\s+of\s+(?:rs\b|inr\b|₹)"
+    r"|\bpay\s+(?:rs\.?\s*|inr\s*|₹\s*)?\d[\d,]*\s*(?:/-)?\s*(?:rs\b\.?|inr\b|rupees\b)?\s*"
+    r"(?:to|for|before)\s+(?:apply|applying|register|registration|join|joining|the\s+interview)\b"
+    r"|\bguaranteed\s+(?:jobs?|placements?)\b",
+    re.IGNORECASE,
+)
+#: "No registration fee", "never charges a fee": a sentence an honest advert
+#: writes to say the opposite. A money phrase right after one of these, in the
+#: SAME sentence, is not an ask; "We do not charge. Registration fee Rs 500"
+#: still is.
+_NEGATED = re.compile(
+    r"\b(?:no|not|never|without|zero|free\s+of)\b(?:[^\w.;!?\n]+\w+){0,2}[^\w.;!?\n]*$", re.IGNORECASE
+)
+_DATA_ENTRY = re.compile(r"\bdata\s+entry\b", re.IGNORECASE)
+_EASY_MONEY = re.compile(
+    r"\bearn\w*\b[^.\n]{0,40}?\b(?:per\s+(?:day|week|hour)|daily|weekly|a\s+day)\b",
+    re.IGNORECASE,
+)
+_WORK_FROM_HOME = re.compile(r"\b(?:work\s+from\s+home|home[\s-]+based|wfh)\b", re.IGNORECASE)
+_PART_TIME = re.compile(r"\bpart[\s-]+time\b", re.IGNORECASE)
+
+#: An advert the INTERNSHIP search found is an internship only when its title
+#: says so or its description describes one. Adzuna matches the word anywhere,
+#: so "internship experience preferred" on a full-time job used to make that
+#: job an "Internship · " posting.
+_INTERNSHIP_TITLE = re.compile(r"\bintern(ship)?s?\b", re.IGNORECASE)
+_INTERNSHIP_DESCRIBED = re.compile(
+    r"\b\d{1,2}[\s-]*months?[\s-]+(?:paid\s+|unpaid\s+)?internship\b"
+    r"|\bstipend\b"
+    r"|\binternship\s+(?:period|duration|program(?:me)?|opportunity|role|position)\b"
+    r"|\bthis\s+is\s+an?\s+(?:paid\s+|unpaid\s+)?internship\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -180,6 +250,12 @@ class ScoutSummary:
     duplicates: int = 0
     capped: int = 0
     closed: int = 0
+    #: Adverts skipped because they were older than the age limit.
+    stale: int = 0
+    #: Adverts skipped because `is_suspicious` read them as a scam.
+    suspicious: int = 0
+    #: Another run held the lock, so this one did nothing at all.
+    busy: bool = False
     #: New postings per leaf, by the leaf's name.
     per_leaf: dict[str, int] = field(default_factory=dict)
     #: One sentence per board that failed this morning; never a URL.
@@ -206,6 +282,8 @@ class ScoutSummary:
             "duplicates": self.duplicates,
             "capped": self.capped,
             "closed": self.closed,
+            "stale": self.stale,
+            "suspicious": self.suspicious,
             "per_leaf": dict(self.per_leaf),
             "errors": dict(self.errors),
             "answered": list(self.answered),
@@ -319,6 +397,7 @@ def phrases_for(leaf: Leaf) -> tuple[str, ...]:
 
 
 def _min_years(text: str) -> int | None:
+    text = _AGE.sub(" ", text)
     lows = [int(m.group(1)) for pattern in _EXPERIENCE for m in pattern.finditer(text)]
     return min(lows) if lows else None
 
@@ -327,20 +406,46 @@ def is_fresher_role(found: FoundJob) -> bool:
     """A role a fresher can apply to: no senior title, no 2+ years asked for."""
     if _SENIOR_TITLE.search(found.title):
         return False
-    if _MANAGER.search(found.title) and not _ASSISTANT_MANAGER.search(found.title):
+    if _MANAGER.search(found.title) and not _FRESHER_MANAGER.search(found.title):
         return False
     years = _min_years(f"{found.title} {found.description}")
     return years is None or years <= MAX_FRESHER_YEARS
 
 
+def _asks_for_money(text: str) -> bool:
+    return any(not _NEGATED.search(text[max(0, m.start() - 40) : m.start()]) for m in _MONEY_ASK.finditer(text))
+
+
+def is_suspicious(found: FoundJob) -> bool:
+    """An advert the portal must not carry, whatever else it says.
+
+    Money asked of the candidate anywhere (a fee, a deposit, "pay Rs 999 to
+    apply", "guaranteed placement"); "data entry", "work from home" or "home
+    based" in the TITLE; and "earn ... per day" anywhere. In the description
+    alone, work from home or data entry counts only beside part time or easy
+    money, because "work from home two days a week" is an ordinary hybrid job
+    and an analyst's duties can include data entry.
+    """
+    text = f"{found.title} {found.description}"
+    if _asks_for_money(text) or _EASY_MONEY.search(text):
+        return True
+    if _DATA_ENTRY.search(found.title) or _WORK_FROM_HOME.search(found.title):
+        return True
+    if _DATA_ENTRY.search(found.description) or _WORK_FROM_HOME.search(found.description):
+        return bool(_PART_TIME.search(text))
+    return False
+
+
 def is_internship(found: FoundJob) -> bool:
-    return bool(re.search(r"\bintern(ship)?s?\b", found.title, re.IGNORECASE))
+    return bool(_INTERNSHIP_TITLE.search(found.title))
 
 
 def posting_title(found: FoundJob, kind: str) -> str:
-    """The advert's own title, marked when it is an internship that does not say so."""
+    """The advert's own title, marked when it is an internship that does not
+    say so. The internship search's say-so is not enough: the description has
+    to describe one, or the advert is an ordinary job."""
     title = found.title
-    if kind == KIND_INTERNSHIP and not is_internship(found):
+    if kind == KIND_INTERNSHIP and not is_internship(found) and _INTERNSHIP_DESCRIBED.search(found.description):
         title = INTERNSHIP_PREFIX + title
     return title[:200]
 
@@ -410,6 +515,17 @@ def search_all(
                         stopped = True
                         break
                     continue
+                except Exception as exc:  # noqa: BLE001 - one board must never stop the other
+                    # Something nobody planned for (a parser bug, a library
+                    # error). The TYPE is recorded and never the message,
+                    # because an HTTP library's message can carry the URL and
+                    # both boards put their key in it. The board is not asked
+                    # again: an error nobody understands will happen again.
+                    name = PROVIDER_NAMES.get(source.name, source.name)
+                    summary.errors[source.name] = f"{name} failed unexpectedly ({type(exc).__name__})."
+                    log.warning("Job agent: %s failed unexpectedly (%s).", source.name, type(exc).__name__)
+                    stopped = True
+                    break
                 summary.found += len(found)
                 if source.name not in summary.answered:
                     summary.answered.append(source.name)
@@ -425,7 +541,15 @@ def _newest_first(item: tuple[FoundJob, str]) -> tuple[int, float]:
 
 
 def close_expired(db: Session, now: datetime) -> int:
-    """Close every OPEN agent posting older than the age limit, or past its date.
+    """Close every OPEN agent posting older than the age limit, past its date,
+    or whose course is gone.
+
+    The last is the orphan a college deletion leaves: `college_deletion`
+    clears `jobs.college_id` and `course_id`, and a row with neither reads as
+    "every college, every course" to `visible_clauses`, so an HR advert found
+    for one deleted course would reach every HR student and every student with
+    no track. An agent posting only ever exists for one course, so one with no
+    course has nobody it was meant for.
 
     The office's own postings are never touched, which is why this filters on
     the `source_ref` prefixes this module writes and nothing broader.
@@ -435,7 +559,7 @@ def close_expired(db: Session, now: datetime) -> int:
         select(Job).where(
             Job.status == STATUS_OPEN,
             _agent_ref_clause(),
-            or_(Job.posted_on < cutoff, Job.closes_on < now),
+            or_(Job.posted_on < cutoff, Job.closes_on < now, Job.course_id.is_(None)),
         )
     ).all()
     for job in rows:
@@ -458,12 +582,17 @@ def run(
     summary = ScoutSummary(enabled=bool(sources), dry_run=dry_run, sources=[s.name for s in sources])
     if not sources:
         return summary
+    if not db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": RUN_LOCK_KEY}):
+        db.rollback()
+        summary.busy = True
+        return summary
 
     streams = list(streams) if streams is not None else leaves(db)
     summary.leaves = len(streams)
     found = search_all(sources, (p for leaf in streams for p in phrases_for(leaf)), summary)
     terms = _skill_terms(db)
     cap = settings.job_scout_new_per_specialization
+    oldest = now - timedelta(days=settings.job_scout_max_age_days)
 
     # The rows this run may meet again, read once: every row a ref could name,
     # and every open posting a course's students already see (the office's
@@ -488,12 +617,24 @@ def run(
             # (or the age sweep did) must not come back the next morning
             # through the OTHER board, under a ref the closed row does not
             # carry. Past the window a re-listing is a new advert.
+            #
+            # A posting with no course counts only where these students can
+            # see it: their college's, or one naming no college. Another
+            # college's office posting must not hide this college's job, and
+            # an orphaned AGENT posting (its college deleted) is nobody's.
             by_key[leaf.course_id] = {
                 _dup_key(job.title, job.company): job
                 for job in db.scalars(
                     select(Job)
                     .where(
-                        or_(Job.course_id == leaf.course_id, Job.course_id.is_(None)),
+                        or_(
+                            Job.course_id == leaf.course_id,
+                            and_(
+                                Job.course_id.is_(None),
+                                or_(Job.college_id.is_(None), Job.college_id == leaf.college_id),
+                                or_(Job.source_ref.is_(None), ~_agent_ref_clause()),
+                            ),
+                        ),
                         or_(Job.status == STATUS_OPEN, Job.created_at >= now - DUPLICATE_WINDOW),
                     )
                     .order_by(Job.created_at)
@@ -506,6 +647,14 @@ def run(
 
         created = 0
         for (advert, kind), ref in zip(candidates, refs):
+            # An advert past the age limit would be posted and closed by the
+            # sweep in the same run, and take one of the day's places doing it.
+            if advert.posted_on is not None and advert.posted_on < oldest:
+                summary.stale += 1
+                continue
+            if is_suspicious(advert):
+                summary.suspicious += 1
+                continue
             if not is_fresher_role(advert):
                 continue
             summary.kept += 1

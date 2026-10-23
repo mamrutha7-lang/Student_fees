@@ -90,7 +90,8 @@ def test_a_fresher_role_is_one_a_fresher_can_apply_to(title: str, description: s
 
 
 def test_an_internship_says_so_in_its_title() -> None:
-    assert job_scout.posting_title(_advert("HR Trainee"), job_scout.KIND_INTERNSHIP) == "Internship · HR Trainee"
+    described = _advert("HR Trainee", "A 3-month internship with a stipend")
+    assert job_scout.posting_title(described, job_scout.KIND_INTERNSHIP) == "Internship · HR Trainee"
     assert job_scout.posting_title(_advert("HR Intern"), job_scout.KIND_INTERNSHIP) == "HR Intern"
     assert job_scout.posting_title(_advert("Summer Internship - HR"), job_scout.KIND_INTERNSHIP).startswith("Summer")
     assert job_scout.posting_title(_advert("HR Trainee"), job_scout.KIND_JOB) == "HR Trainee"
@@ -311,7 +312,8 @@ def test_only_fresher_roles_are_posted_and_internships_say_so(campus, runs) -> N
         def search(self, phrase: str, *, internship: bool) -> list[FoundJob]:
             if phrase != hr_phrase:
                 return []
-            return [_advert("HR Trainee", company="Learn Co")] if internship else jobs
+            trainee = _advert("HR Trainee", "A 3-month internship with a stipend", company="Learn Co")
+            return [trainee] if internship else jobs
 
     summary = runs(campus, [Board(ADZUNA)])
     titles = sorted(row.title for row in _rows(campus))
@@ -530,12 +532,16 @@ def test_one_board_failing_does_not_stop_the_other(campus, runs) -> None:
 
 
 def test_the_job_exits_zero_with_no_keys_and_one_when_every_board_failed(monkeypatch) -> None:
+    # main() would register this pytest process as reep-scheduled-jobs, and
+    # every later app startup in the session would then be refused Sentry.
+    monkeypatch.setattr(job_scout_job, "init_sentry", lambda *a, **kw: False)
     monkeypatch.setattr(job_scout_job, "sources_from_settings", lambda: [])
     assert job_scout_job.main([]) == 0
 
     class Summary:
+        busy = False
         dry_run = False
-        leaves = calls = found = kept = created = merged = duplicates = capped = closed = 0
+        leaves = calls = found = stale = suspicious = kept = created = merged = duplicates = capped = closed = 0
         per_leaf: dict = {}
         errors = {ADZUNA: "Adzuna could not be reached (ConnectError)."}
         every_source_failed = True

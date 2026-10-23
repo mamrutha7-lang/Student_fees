@@ -26,6 +26,7 @@ import html
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -54,6 +55,8 @@ class _RedactOutboundUrls(logging.Filter):
             )
         return True
 
+
+log = logging.getLogger(__name__)
 
 _URL_FILTER = _RedactOutboundUrls()
 if not any(isinstance(f, _RedactOutboundUrls) for f in logging.getLogger("httpx").filters):
@@ -90,8 +93,22 @@ INTERNSHIP_WORDS = ("intern", "internship")
 
 _TAG = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
+#: Control characters other than ordinary whitespace, C1 included. Postgres
+#: refuses NUL in a text column, and the morning is ONE transaction, so a
+#: single advert carrying "\x00" used to fail the commit and lose every
+#: posting found that day (the break test that found it is in
+#: tests/test_job_agent_hostile.py).
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+#: The same, ordinary whitespace controls included, for the two values that
+#: reach the row as they arrive (the id and the link): those are refused, not
+#: cleaned, because a link with a byte taken out is a different link.
+_ANY_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 #: Long enough for the advert's first paragraphs, short enough to be a row.
 DESCRIPTION_MAX = 2000
+#: An advert id longer than this is not an id. It becomes part of
+#: `jobs.source_ref`, whose unique btree index refuses a key over about 2.7 KB
+#: -- at COMMIT, losing the morning the same way a NUL did.
+MAX_EXTERNAL_ID = 128
 
 #: Seconds between two calls to one board. Adzuna's free tier allows 25 calls
 #: a MINUTE as well as 250 a day, and a morning's thirty calls made back to
@@ -135,10 +152,50 @@ class Source(Protocol):
 
 
 def plain_text(value: Any) -> str:
-    """An advert's HTML as one line of text: tags out, entities decoded."""
+    """An advert's HTML as one line of text: tags out, entities decoded,
+    control characters out (after decoding, because "&#0;" is one too)."""
     if not isinstance(value, str):
         return ""
-    return _SPACE.sub(" ", html.unescape(_TAG.sub(" ", value))).strip()
+    return _SPACE.sub(" ", _CONTROL.sub("", html.unescape(_TAG.sub(" ", value)))).strip()
+
+
+def _name(value: Any) -> str:
+    """A company or a place, which a board sends as `{"display_name": ...}` or,
+    on a bad day, as plain text. Anything else is no name at all."""
+    if isinstance(value, dict):
+        value = value.get("display_name")
+    return plain_text(value)
+
+
+def _external_id(value: Any) -> str:
+    """The board's own id for an advert, or "" when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return ""
+    text = str(value).strip()
+    return text if len(text) <= MAX_EXTERNAL_ID and not _ANY_CONTROL.search(text) else ""
+
+
+def _parse_page(provider: str, rows: Any, parse: Callable[[Any], FoundJob | None]) -> list[FoundJob]:
+    """Every advert on a page that parses. ONE BAD ROW COSTS ONE ROW: a field
+    of a shape nobody expected used to raise out of the parser, out of the
+    search and out of the run, so neither board posted anything that morning.
+    The row is skipped and counted in the log by provider only, because its
+    content is the board's and not ours to repeat."""
+    if not isinstance(rows, list):
+        return []
+    out: list[FoundJob] = []
+    skipped = 0
+    for row in rows:
+        try:
+            job = parse(row)
+        except Exception:  # noqa: BLE001 - see the docstring
+            job = None
+            skipped += 1
+        if job is not None:
+            out.append(job)
+    if skipped:
+        log.warning("Job agent: skipped %d advert(s) from %s that could not be read.", skipped, provider)
+    return out
 
 
 def parse_posted(value: Any) -> datetime | None:
@@ -163,8 +220,11 @@ def parse_posted(value: Any) -> datetime | None:
 
 
 def _https(url: Any) -> str | None:
-    if isinstance(url, str) and url.strip().lower().startswith("https://") and len(url) <= 1000:
-        return url.strip()
+    if not isinstance(url, str):
+        return None
+    url = url.strip()
+    if url.lower().startswith("https://") and len(url) <= 1000 and not _ANY_CONTROL.search(url):
+        return url
     return None
 
 
@@ -235,15 +295,14 @@ class AdzunaSource(_Paced):
             },
             headers={"Accept": "application/json"},
         )
-        results = body.get("results") if isinstance(body, dict) else None
-        return [job for job in (_adzuna_job(r) for r in results or []) if job is not None]
+        return _parse_page(ADZUNA, body.get("results") if isinstance(body, dict) else None, _adzuna_job)
 
 
 def _adzuna_job(row: Any) -> FoundJob | None:
     if not isinstance(row, dict):
         return None
-    external_id = str(row.get("id") or "").strip()
-    company = plain_text((row.get("company") or {}).get("display_name"))
+    external_id = _external_id(row.get("id"))
+    company = _name(row.get("company"))
     title = plain_text(row.get("title"))
     url = _https(row.get("redirect_url"))
     if not (external_id and company and title and url):
@@ -253,7 +312,7 @@ def _adzuna_job(row: Any) -> FoundJob | None:
         external_id=external_id,
         title=title,
         company=company,
-        location=plain_text((row.get("location") or {}).get("display_name")) or None,
+        location=_name(row.get("location")) or None,
         apply_url=url,
         description=plain_text(row.get("description"))[:DESCRIPTION_MAX],
         posted_on=parse_posted(row.get("created")),
@@ -283,15 +342,14 @@ class JoobleSource(_Paced):
                 "page": "1",
             },
         )
-        rows = body.get("jobs") if isinstance(body, dict) else None
-        return [job for job in (_jooble_job(r) for r in rows or []) if job is not None]
+        return _parse_page(JOOBLE, body.get("jobs") if isinstance(body, dict) else None, _jooble_job)
 
 
 def _jooble_job(row: Any) -> FoundJob | None:
     if not isinstance(row, dict):
         return None
-    external_id = str(row.get("id") or "").strip()
-    company = plain_text(row.get("company"))
+    external_id = _external_id(row.get("id"))
+    company = _name(row.get("company"))
     title = plain_text(row.get("title"))
     url = _https(row.get("link"))
     if not (external_id and company and title and url):
@@ -301,7 +359,7 @@ def _jooble_job(row: Any) -> FoundJob | None:
         external_id=external_id,
         title=title,
         company=company,
-        location=plain_text(row.get("location")) or None,
+        location=_name(row.get("location")) or None,
         apply_url=url,
         description=plain_text(row.get("snippet"))[:DESCRIPTION_MAX],
         posted_on=parse_posted(row.get("updated")),

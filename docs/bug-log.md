@@ -62,6 +62,63 @@ Entry format:
   the address bounced on 2026-10-07 and Amazon SES now delivers nothing to it.
   No code fix needed; the office can lift the block on `/admin/mail`.
 
+## 2026-10-23 — The daily job agent could lose a whole morning, post scams and tell students "100% match"
+
+- **Symptom:** found before release, by attacking the agent the way the real
+  world would ([PR #217](https://github.com/darshani8/reep-/pull/217) had not
+  been merged or run in production). No student saw any of it.
+  (1) One odd advert lost every posting that morning: a `company` sent as text
+  instead of an object, a NUL byte in a title, or a very long advert id.
+  (2) Scam adverts ("Data Entry - Work From Home, registration fee Rs 500")
+  passed the fresher filter. (3) Every posting that lists no skills told the
+  student "100% skill match", and most agent adverts name none. (4) Deleting a
+  college turned its agent postings into postings for every college.
+  (5) A full-time job with "internship experience preferred" was titled
+  "Internship · ". (6) "Minimum 3 years" and "3 to 5 years" were read as
+  fresher roles, and "Relationship Manager" was dropped. (7) Two runs at once
+  failed with an alert. (8) An old Jooble advert used up one of the day's
+  places, and another college's office posting hid this college's job.
+- **Cause:** (1) `job_sources._adzuna_job` called `.get` on whatever arrived,
+  `plain_text` kept control characters, any id length was accepted, and
+  `job_scout.search_all` caught only `SourceError`; the run is one transaction,
+  so one failed row or one raise lost the commit. (2) Nothing looked for money
+  asks. (3) `routers/student.my_jobs` returned 100.0 when `required_skills` was
+  empty. (4) `college_deletion` clears `jobs.college_id` and `course_id`, which
+  `visible_clauses` reads as "everyone". (5) `posting_title` prefixed whatever
+  the internship search returned. (6) The experience patterns needed the word
+  "experience", and only "assistant manager" was allowed. (7) Nothing
+  serialised runs. (8) No age check before posting; the dedupe read every
+  course-less posting from any college.
+- **Evidence:** `tests/test_job_agent_hostile.py`, 28 tests, all failing on
+  commit `133d8fe`, including `psycopg.DataError: PostgreSQL text fields cannot
+  contain NUL (0x00) bytes` and `KeyError: 'results'` ending the run.
+- **Fix:** `job_sources`: `_parse_page` skips a bad row, `_name` reads a
+  name as text or `{"display_name"}`, `plain_text` strips control characters,
+  an id or a link carrying one is refused, `MAX_EXTERNAL_ID` (128). `job_scout`: `is_suspicious` (strict, the owner's
+  choice); the internship prefix only when the description describes one; the
+  wider experience patterns, with age lines removed first; Relationship Manager
+  allowed; stale adverts skipped; `close_expired` closes agent postings with no
+  course; the dedupe is scoped to the college and ignores orphans;
+  `pg_try_advisory_xact_lock(RUN_LOCK_KEY)`, and a busy run exits 0;
+  `search_all` records an unexpected error by type and stops that board.
+  `match_percent` is None with no skills, printed "Skills not listed" on the
+  jobs page, the resume builder's goal strip and Tailor step, and in the
+  assistant's answer (the owner's choice, for every posting). The daily cap is
+  5 per specialization (was 10).
+- **Where:** [PR #217](https://github.com/darshani8/reep-/pull/217);
+  `app/job_sources.py`, `app/job_scout.py`, `app/job_scout_job.py`,
+  `app/config.py`, `app/routers/student.py`, `app/ai/orchestrator.py`, the
+  student jobs and resume screens, TC-314.
+- **Checked by:** `tests/test_job_agent_hostile.py` (each test seen failing
+  first), `tests/test_job_scout.py`, `tests/test_job_sources.py`, the full
+  backend suite, `ng test`, `ng build` and the web static checks.
+- **Status:** open PR, 2026-10-23.
+- **Left open:** the same title and company in two cities is still posted
+  once (the dedupe key ignores the location). Deleting a key from
+  `reep/external` while its `cdk.json` flag is on still stops the api from
+  starting on its next deploy; that is a runbook rule (`docs/job-scout.md`),
+  not code.
+
 ## 2026-10-17 — Faculty saw who else could open a student, and a disabled account was not told why
 
 - **Symptom:** reported by the owner from the Student 360 page. (1) The

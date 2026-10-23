@@ -496,8 +496,10 @@ class Settings(BaseSettings):
     # providers rarely give one, so without this the board would only grow.
     job_scout_max_age_days: int = 30
     # At most this many NEW postings per specialization per run, newest first,
-    # so one busy morning cannot bury the office's own postings.
-    job_scout_new_per_specialization: int = 10
+    # so one busy morning cannot bury the office's own postings. Five is the
+    # owner's number (2026-10-23): kept for 30 days, that is at most about 150
+    # agent postings on one student's board, a table with no pagination.
+    job_scout_new_per_specialization: int = 5
 
     @property
     def sentry_environment_name(self) -> str:

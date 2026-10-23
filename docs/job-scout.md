@@ -44,17 +44,25 @@ Adzuna's terms require every advert shown to carry **"Jobs by Adzuna"** with a l
    - A phrase two streams share is searched once.
    - That is about 30 calls per board per day, well inside Adzuna's free 250.
    - Calls to one board are spaced out: 2.6 s apart for Adzuna, which also refuses the 26th call in a minute, and 1 s for Jooble.
-3. **Keeps only fresher roles.**
-   - It drops senior titles (senior, lead, head, director, manager — except assistant manager), adverts asking for two or more years, links that are not https, and adverts with no company.
-   - An internship's title starts "Internship · " unless it already says intern.
+3. **Keeps only safe, fresh, fresher roles.**
+   - **Too old:** an advert older than 30 days (`JOB_SCOUT_MAX_AGE_DAYS`) is skipped, so it never takes one of the day's places.
+   - **Suspicious** (`is_suspicious`, strict, the owner's choice): anything asking the candidate for money (a registration, processing or security fee, a deposit, "pay Rs 999 to apply", "guaranteed placement"), "earn … per day" anywhere, and "data entry", "work from home" or "home based" in the title. In the description alone, work from home or data entry counts only beside "part time", so an ordinary hybrid job stays. "No registration fee" is not a money ask.
+   - **Not a fresher role:** senior titles (senior, lead, head, director, manager — except assistant manager and relationship manager), and two or more years asked for, written any way ("2+ years experience", "minimum 3 years", "3 to 5 years", "2-4 yrs"). "Age 21 to 28 years" is an age, not experience, and "a 2 years MBA" is a degree.
+   - The parser strips control characters from the text, and drops an advert whose id or link carries one, whose id is over 128 characters, whose link is not https, or that has no company. One advert of a shape nobody expected is skipped, never the whole page.
+   - An internship's title starts "Internship · " only when the description describes one (a stipend, "a 3-month internship"), unless the title already says intern. Adzuna matches the word anywhere, so "internship experience preferred" on a full-time job is not an internship.
 4. **Posts once per course**, aimed at that course and specialization: `source_ref = <board>:<advert id>:<course id>`.
    - An advert found for two specializations of one course is one posting with both codes.
    - An advert on both boards, or one the office already posted, is not posted again.
    - A closed posting never comes back.
-   - At most 10 new postings per specialization per morning (`JOB_SCOUT_NEW_PER_SPECIALIZATION`).
-5. **Matches skills.** Any skill-catalogue name or alias in the advert becomes a `required_skills` slug, so the skill-match % works.
-6. **Closes its own old postings.** An agent posting more than 30 days old (`JOB_SCOUT_MAX_AGE_DAYS`) is closed. The office's own postings are never touched.
+   - At most 5 new postings per specialization per morning (`JOB_SCOUT_NEW_PER_SPECIALIZATION`), newest first. Kept for 30 days, that is at most about 150 agent postings on one student's board.
+   - An office posting with no course only counts as the same advert inside its own college, or when it names no college.
+5. **Matches skills.** Any skill-catalogue name or alias in the advert becomes a `required_skills` slug. A posting that lists no skills shows **"Skills not listed"** to the student instead of a match %, office postings included. It used to say 100%.
+6. **Closes its own old postings.** An agent posting more than 30 days old (`JOB_SCOUT_MAX_AGE_DAYS`) is closed, and so is one whose course is gone. Deleting a college clears a posting's college and course, and a posting with neither would otherwise reach every student of that specialization in every college. The office's own postings are never touched.
 7. **Leaves a receipt.** It writes one audit row (`job_scout_run`, actor `SYSTEM`), which is what the sheet's status line reads.
+
+**Two runs at once:** the run holds a Postgres advisory lock (`RUN_LOCK_KEY`). A second run started while one is going (the Ops task pressed at 06:00) logs "another run is in progress" and exits 0, writing nothing.
+
+**One board breaking in a new way** (a parser bug, a library error) is recorded as "<board> failed unexpectedly (<error type>)" and that board is not asked again that morning. The other board carries on.
 
 **An agent posting can be closed but not removed.** A removed row is forgotten, so the next morning's run would post the same advert again. The sheet greys Remove with the reason when one is ticked, and the API answers 409.
 
@@ -78,7 +86,7 @@ Adzuna's terms require every advert shown to carry **"Jobs by Adzuna"** with a l
 ## Checking a morning
 
 - **The sheet's status line:** the last run, how many it posted and closed, which boards are on, and which failed.
-- **CloudWatch, api log group:** `Job agent run complete: …` names each stream's count. A board that failed logs `Job agent: adzuna failed this morning: …`.
+- **CloudWatch, api log group:** `Job agent run complete: …` gives the counts (found, too old, suspicious, kept, posted) and each stream's postings. A board that failed logs `Job agent: adzuna failed this morning: …`.
 - **Sentry (`reep-scheduled-jobs`, monitor `reep-job-scout-daily`):** this needs `SENTRY_JOBS_DSN`.
   - One board failing is ERROR on the monitor, with exit 0.
   - Both boards failing is exit 1.

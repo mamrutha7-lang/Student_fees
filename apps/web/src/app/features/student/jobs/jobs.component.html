@@ -108,15 +108,19 @@
                 }
               </td>
               <td>
-                <div class="match">
-                  <span class="match-bar">
-                    <span
-                      class="match-fill {{ matchTone(row.match_percent) }}"
-                      [style.width.%]="row.match_percent"
-                    ></span>
-                  </span>
-                  <span class="match-val">{{ row.match_percent | number: '1.0-0' }}%</span>
-                </div>
+                @if (row.match_percent === null) {
+                  <span class="match-none">Skills not listed</span>
+                } @else {
+                  <div class="match">
+                    <span class="match-bar">
+                      <span
+                        class="match-fill {{ matchTone(row.match_percent) }}"
+                        [style.width.%]="row.match_percent"
+                      ></span>
+                    </span>
+                    <span class="match-val">{{ row.match_percent | number: '1.0-0' }}%</span>
+                  </div>
+                }
               </td>
               <td>
                 @if (!row.eligible && row.reasons.length) {

@@ -1154,7 +1154,12 @@ class JobRowOut(BaseModel):
     location: str | None
     apply_url: str | None
     required_skills: list[str]
-    match_percent: float
+    #: None when the posting lists no skills. It used to be 100.0, so every
+    #: daily-agent advert (whose text rarely names a catalogue skill) told the
+    #: student they were a perfect fit; "Skills not listed" is the true answer
+    #: and the owner's choice for every posting, the office's included
+    #: (2026-10-23).
+    match_percent: float | None
     eligible: bool
     reasons: list[str]
     applied: bool
@@ -1228,7 +1233,7 @@ def my_jobs(
     audience = audience_for_student(db, student_id)
     for j in db.scalars(postings_for(audience)).all():
         required = set(j.required_skills or [])
-        match = round(100 * len(skill_slugs & required) / len(required), 1) if required else 100.0
+        match = round(100 * len(skill_slugs & required) / len(required), 1) if required else None
         # Per-posting override wins; else fall back to the active criteria.
         # The per-posting override still wins; what changed is what it falls
         # back TO. A posting that names no gate is governed by the criteria that

@@ -51,7 +51,8 @@ interface JobRow {
   location: string | null;
   apply_url: string | null;
   required_skills: string[];
-  match_percent: number;
+  /** Null when the posting lists no skills: the screen says so rather than a 100%. */
+  match_percent: number | null;
   eligible: boolean;
   reasons: string[];
   applied: boolean;
