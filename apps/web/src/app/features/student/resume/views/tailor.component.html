@@ -40,9 +40,13 @@
                 }
               </div>
             </div>
-            <span class="verdict-pct"
-              >{{ job.match_percent | number: '1.0-0' }}%<small>skill match</small></span
-            >
+            @if (job.match_percent !== null) {
+              <span class="verdict-pct"
+                >{{ job.match_percent | number: '1.0-0' }}%<small>skill match</small></span
+              >
+            } @else {
+              <span class="verdict-pct"><small>Skills not listed</small></span>
+            }
           </div>
           @if (!job.eligible && job.reasons.length) {
             <ul class="verdict-reasons">

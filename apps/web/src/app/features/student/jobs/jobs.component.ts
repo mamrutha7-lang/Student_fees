@@ -6,7 +6,9 @@
  * the deadline (derived from closes_on and coloured as it nears) beneath it, the
  * eligibility verdict, a match-% bar, an application-status chip that gives way
  * to the server's own reason on an ineligible row, and one primary CTA (Apply
- * opens apply_url and POSTs /jobs/{id}/apply). Three client-side filters —
+ * opens apply_url and POSTs /jobs/{id}/apply). "View JD" opens the posting's
+ * description in a row of its own beneath it; for a job-agent posting that is
+ * the board's summary, and the full text is still behind Apply. Three client-side filters —
  * eligibility, location, deadline — narrow the fetched list.
  *
  * IT USED TO BE THREE TABS AND IS NOW ONE BOARD. Applications was a table of
@@ -35,6 +37,7 @@ import { FormsModule } from '@angular/forms';
 
 import { environment } from '../../../../environments/environment';
 import { failedReadMessage } from '../../../core/feature-refusal';
+import { jobSourceCredit } from '../../../core/job-source';
 
 type Tone = 'good' | 'warn' | 'risk' | 'neutral';
 
@@ -50,12 +53,17 @@ interface JobRow {
   location: string | null;
   apply_url: string | null;
   required_skills: string[];
-  match_percent: number;
+  /** Null when the posting lists no skills: the screen says so rather than a 100%. */
+  match_percent: number | null;
   eligible: boolean;
   reasons: string[];
   applied: boolean;
   closes_on: string | null;
   posted_on: string | null;
+  /** `office`, or the board the daily job agent found it on. */
+  source?: string;
+  /** The job description (JD); for an agent posting, the board's summary. */
+  description?: string | null;
 }
 
 /** Resolved deadline view for a card. */
@@ -80,6 +88,11 @@ export class JobsComponent {
 
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
+  /** "Jobs by Adzuna" under a posting the job agent found; null for the office's. */
+  readonly credit = jobSourceCredit;
+
+  /** The postings whose JD is open under their row. More than one may be. */
+  readonly openJd = signal<ReadonlySet<string>>(new Set());
 
   // --- opportunity filters (client-side over the fetched list) ---
   readonly filterElig = signal<EligFilter>('all');
@@ -183,6 +196,16 @@ export class JobsComponent {
       label: `Closes ${this.fmtDate(row.closes_on!)}`,
       closed: false,
     };
+  }
+
+  jdOpen(id: string): boolean {
+    return this.openJd().has(id);
+  }
+
+  toggleJd(id: string): void {
+    const next = new Set(this.openJd());
+    if (!next.delete(id)) next.add(id);
+    this.openJd.set(next);
   }
 
   /** Tint the match bar so a weak match reads at a glance. */

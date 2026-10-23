@@ -2,7 +2,7 @@
   <div class="dt-header">
     <div>
       <h1 class="dt-title">Jobs</h1>
-      <div class="dt-sub">Updated weekly · auto alert emailed to matching students</div>
+      <div class="dt-sub">Updated every morning · auto alert emailed to matching students</div>
     </div>
   </div>
 
@@ -77,10 +77,26 @@
         <tbody>
           @for (row of opportunityRows(); track row.id) {
             @let dl = deadline(row);
+            @let jd = jdOpen(row.id);
             <tr [class.ineligible]="!row.eligible">
               <td>
                 <div class="role-title">{{ row.title }}</div>
                 <div class="dt-sub">{{ row.company }}</div>
+                @if (credit(row.source); as by) {
+                  <a class="source-credit" [href]="by.href" target="_blank" rel="noopener">{{ by.label }}</a>
+                }
+                @if (row.description) {
+                  <button
+                    type="button"
+                    class="jd-toggle"
+                    [attr.aria-expanded]="jd"
+                    [attr.aria-controls]="jd ? 'jd-' + row.id : null"
+                    (click)="toggleJd(row.id)"
+                  >
+                    <span class="icon" [class.open]="jd" aria-hidden="true">expand_more</span
+                    >{{ jd ? 'Hide JD' : 'View JD' }}
+                  </button>
+                }
               </td>
               <td>
                 <div class="loc">
@@ -105,15 +121,19 @@
                 }
               </td>
               <td>
-                <div class="match">
-                  <span class="match-bar">
-                    <span
-                      class="match-fill {{ matchTone(row.match_percent) }}"
-                      [style.width.%]="row.match_percent"
-                    ></span>
-                  </span>
-                  <span class="match-val">{{ row.match_percent | number: '1.0-0' }}%</span>
-                </div>
+                @if (row.match_percent === null) {
+                  <span class="match-none">Skills not listed</span>
+                } @else {
+                  <div class="match">
+                    <span class="match-bar">
+                      <span
+                        class="match-fill {{ matchTone(row.match_percent) }}"
+                        [style.width.%]="row.match_percent"
+                      ></span>
+                    </span>
+                    <span class="match-val">{{ row.match_percent | number: '1.0-0' }}%</span>
+                  </div>
+                }
               </td>
               <td>
                 @if (!row.eligible && row.reasons.length) {
@@ -156,6 +176,21 @@
                 }
               </td>
             </tr>
+            @if (jd && row.description) {
+              <tr class="jd-row" [class.ineligible]="!row.eligible" [id]="'jd-' + row.id">
+                <td colspan="6">
+                  <div class="jd" role="region" [attr.aria-label]="'Job description: ' + row.title">
+                    <div class="jd-head">Job description</div>
+                    <p class="jd-text">{{ row.description }}</p>
+                    @if (credit(row.source)) {
+                      <div class="jd-foot">
+                        A summary from the job board. The full description is on the employer's page.
+                      </div>
+                    }
+                  </div>
+                </td>
+              </tr>
+            }
           } @empty {
             <tr class="empty-row">
               <td colspan="6">No roles match these filters.</td>

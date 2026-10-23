@@ -885,7 +885,7 @@ which column each of its five inputs comes from:
 
 | Input | Source | Derivation |
 |---|---|---|
-| skill match % | `skills.slug` joined through `student_skills` | `len(held & required) / len(required)`, or **100.0** when `required` is empty |
+| skill match % | `skills.slug` joined through `student_skills` | `len(held & required) / len(required)`, or **None** when `required` is empty, which the screens print as "Skills not listed" (it was **100.0** until 2026-10-23) |
 | latest CGPA | `semester_results.cgpa` | the row with the **highest `semester`** — `published_on` is never consulted |
 | live backlogs | `semester_results.live_backlogs` | `coalesce(sum(...), 0)` **across all semesters**, inlined in the endpoint itself ([student.py:567-574](../../apps/api-py/app/routers/student.py#L567-L574)) — `GET /student/jobs` does *not* call the `_live_backlogs` helper at [student.py:1792-1800](../../apps/api-py/app/routers/student.py#L1792-L1800), which is the same query written a second time for the readiness / next-actions endpoints |
 | gap months | `academic_gaps.*_mo` | the four columns summed inline; a missing row is 0 |

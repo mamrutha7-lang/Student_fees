@@ -33,7 +33,8 @@ export interface JobRow {
   company: string;
   location: string | null;
   required_skills: string[];
-  match_percent: number;
+  /** Null when the posting lists no skills. */
+  match_percent: number | null;
   eligible: boolean;
   reasons: string[];
 }
@@ -87,11 +88,13 @@ export class ResumeGoalService {
   readonly matchLabel = computed<string>(() => {
     const job = this.selectedJob();
     if (!job) return 'Choose an opportunity to see your match';
-    const pct = Math.round(job.match_percent);
+    // A posting that lists no skills has no match to state, and a 100% there
+    // told students they were a perfect fit for anything.
+    const match = job.match_percent === null ? 'Skills not listed' : `${Math.round(job.match_percent)}% match`;
     // Eligibility is a gate, not a score: a 90% skill match on a posting whose
     // CGPA cut-off you miss is still not eligible, and saying "90% match" alone
     // would read as "you can apply".
-    return job.eligible ? `${pct}% match · eligible` : `${pct}% match · not yet eligible`;
+    return job.eligible ? `${match} · eligible` : `${match} · not yet eligible`;
   });
 
   readonly matchTone = computed<'good' | 'warn' | 'neutral'>(() => {
