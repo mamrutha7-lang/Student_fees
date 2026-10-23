@@ -281,7 +281,7 @@ def test_targeting_is_exact_to_the_course_and_the_specialization(client, make_us
 
     board = _phrase_board(
         ADZUNA,
-        HR=[_advert("HR Executive", company="People Co")],
+        HR=[_advert("HR Executive", "Recruit and onboard freshers.", company="People Co")],
         DM=[_advert("SEO Executive", company="Clicks Co")],
     )
     summary = runs(campus, [board])
@@ -297,6 +297,10 @@ def test_targeting_is_exact_to_the_course_and_the_specialization(client, make_us
     assert dm_row.id in dm_feed and dm_row.id not in hr_feed and dm_row.id not in mkt_feed
     # Adzuna's terms ask that every advert shown say where it came from.
     assert hr_feed[hr_row.id]["source"] == "adzuna"
+    # The student reads the job description (JD) on REEP; one the board sent
+    # none for says so with a null, never an empty string to render.
+    assert hr_feed[hr_row.id]["description"] == "Recruit and onboard freshers."
+    assert dm_feed[dm_row.id]["description"] is None
 
 
 @requires_db

@@ -1169,6 +1169,10 @@ class JobRowOut(BaseModel):
     #: `jooble`); the screen prints Adzuna's attribution from it, which that
     #: board's terms require on every advert shown.
     source: str = "office"
+    #: The job description (JD), shown under the row by "View JD". For an
+    #: agent posting it is the board's summary, not the employer's full text,
+    #: which stays behind Apply. None when there is none to show.
+    description: str | None = None
 
 
 @router.get("/jobs", response_model=list[JobRowOut])
@@ -1268,6 +1272,7 @@ def my_jobs(
                 closes_on=j.closes_on.isoformat() if j.closes_on else None,
                 posted_on=j.posted_on.isoformat() if j.posted_on else None,
                 source=job_source(j),
+                description=(j.description or "").strip() or None,
             )
         )
     return rows
