@@ -83,7 +83,11 @@
                 <div class="role-title">{{ row.title }}</div>
                 <div class="dt-sub">{{ row.company }}</div>
                 @if (credit(row.source); as by) {
-                  <a class="source-credit" [href]="by.href" target="_blank" rel="noopener">{{ by.label }}</a>
+                  @if (by.href) {
+                    <a class="source-credit" [href]="by.href" target="_blank" rel="noopener">{{ by.label }}</a>
+                  } @else {
+                    <span class="source-credit source-credit--plain">{{ by.label }}</span>
+                  }
                 }
                 @if (row.description) {
                   <button
@@ -182,10 +186,8 @@
                   <div class="jd" role="region" [attr.aria-label]="'Job description: ' + row.title">
                     <div class="jd-head">Job description</div>
                     <p class="jd-text">{{ row.description }}</p>
-                    @if (credit(row.source)) {
-                      <div class="jd-foot">
-                        A summary from the job board. The full description is on the employer's page.
-                      </div>
+                    @if (credit(row.source); as by) {
+                      <div class="jd-foot">{{ by.jdNote }}</div>
                     }
                   </div>
                 </td>

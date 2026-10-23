@@ -240,6 +240,7 @@ def test_the_agent_runs_exactly_when_a_board_has_a_key(monkeypatch) -> None:
     monkeypatch.setattr(settings, "adzuna_app_key", "")
     monkeypatch.setattr(settings, "jooble_api_key", "")
     monkeypatch.setattr(settings, "job_scout_enabled", "")
+    monkeypatch.setattr(settings, "job_scout_company_boards", False)
     assert sources_from_settings() == [] and not settings.job_scout_active
 
     # Half of Adzuna's pair is no key.
