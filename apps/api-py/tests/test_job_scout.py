@@ -16,6 +16,8 @@ What each test holds down, and what comes back if it is deleted:
 7. AN AGENT POSTING IS CLOSED, NOT REMOVED, or the next run reposts it.
 8. A RUN LEAVES A RECEIPT the Jobs sheet reads, and a dry run leaves nothing.
 9. ONE BOARD FAILING DOES NOT STOP THE OTHER, and both failing is a failure.
+10. A COMPANY'S OWN FEED IS CLOSED WHEN THE COMPANY STOPS LISTING THE ROLE, not
+    by its age, and a company that could not be read closes nothing.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from conftest import requires_db
 from app import job_scout, job_scout_job
 from app.config import settings
 from app.db import SessionLocal
-from app.job_sources import ADZUNA, JOOBLE, FoundJob, SourceError
+from app.job_sources import ADZUNA, CAREERS, JOOBLE, FoundJob, SourceError
 from app.jobs_visibility import STATUS_CLOSED, STATUS_OPEN
 from app.models.cohort import Cohort
 from app.models.institution import (
@@ -83,6 +85,7 @@ def _advert(title: str, description: str = "", **kw) -> FoundJob:
         ("Financial Analyst", "2-5 years of experience required", False),
         ("Analyst", "Experience: minimum 3 years", False),
         ("Analyst", "3+ yrs exp in FP&A", False),
+        ("Business Development Mgr - Neuro", "", False),
     ],
 )
 def test_a_fresher_role_is_one_a_fresher_can_apply_to(title: str, description: str, fresher: bool) -> None:
@@ -102,6 +105,7 @@ def test_a_posting_reads_its_source_back_from_its_ref() -> None:
     assert job_scout.source_of_ref("") == "office"
     assert job_scout.source_of_ref("adzuna:1:c") == "adzuna"
     assert job_scout.source_of_ref("jooble:1:c") == "jooble"
+    assert job_scout.source_of_ref("careers:lever/acme/1:c") == "careers"
     # A ref this module did not write is not the agent's.
     assert job_scout.source_of_ref("campus-drive-2026") == "office"
 
@@ -433,6 +437,110 @@ def test_expiry_closes_old_agent_postings_and_never_the_offices(campus, runs) ->
     }
 
 
+@dataclass
+class FakeCareers(FakeBoard):
+    """The company feeds' shape: open roles only, and what each feed listed."""
+
+    lists_open_roles_only: bool = True
+    listed: tuple[frozenset[str], frozenset[str]] | None = None
+
+    def still_listed(self) -> tuple[frozenset[str], frozenset[str]] | None:
+        return self.listed
+
+
+def _company_advert(raw_id: str, title: str = "HR Executive", **kw) -> FoundJob:
+    return _advert(title, provider=CAREERS, external_id=f"lever/acme/{raw_id}", company=kw.pop("company", "Acme"), **kw)
+
+
+@requires_db
+def test_a_company_feed_role_is_posted_and_kept_however_long_ago_it_was_first_posted(campus, runs) -> None:
+    """A role on a company's own feed is open today. Judged by the boards' age
+    rule it would be skipped as stale, or posted and closed in the same run."""
+    now = datetime.now(timezone.utc)
+    first_posted = now - timedelta(days=settings.job_scout_max_age_days + 20)
+    advert = _company_advert("old-but-open", posted_on=first_posted)
+    feed = FakeCareers(CAREERS, by_phrase={job_scout.SEARCH_TERMS["HR"][0]: [advert]})
+    feed.listed = (frozenset({"lever/acme"}), frozenset({advert.external_id}))
+
+    summary = runs(campus, [feed], now=now)
+    assert summary.created == 1 and summary.stale == 0
+    (row,) = _rows(campus)
+    assert row.status == STATUS_OPEN and row.posted_on == first_posted, "the company's own date is kept"
+
+    runs(campus, [feed], now=now + timedelta(days=1))
+    assert [r.status for r in _rows(campus)] == [STATUS_OPEN], "the age sweep must not close a role still listed"
+
+
+@requires_db
+def test_a_company_feed_role_closes_the_morning_the_company_stops_listing_it(campus, runs) -> None:
+    now = datetime.now(timezone.utc)
+    gone, kept = _company_advert("gone", company="Acme"), _company_advert("kept", "HR Recruiter")
+    feed = FakeCareers(CAREERS, by_phrase={job_scout.SEARCH_TERMS["HR"][0]: [gone, kept]})
+    feed.listed = (frozenset({"lever/acme"}), frozenset({gone.external_id, kept.external_id}))
+    runs(campus, [feed], now=now)
+    assert len(_rows(campus)) == 2
+
+    # The next morning the company lists only one of them.
+    feed.by_phrase = {job_scout.SEARCH_TERMS["HR"][0]: [kept]}
+    feed.listed = (frozenset({"lever/acme"}), frozenset({kept.external_id}))
+    summary = runs(campus, [feed], now=now + timedelta(days=1))
+    assert summary.withdrawn == 1 and summary.closed >= 1
+    assert {r.title: r.status for r in _rows(campus)} == {"HR Executive": STATUS_CLOSED, "HR Recruiter": STATUS_OPEN}
+
+
+@requires_db
+def test_a_company_that_could_not_be_read_closes_nothing(campus, runs) -> None:
+    """A feed that failed this morning, or that the source never read, says
+    nothing about whether its roles are still open."""
+    now = datetime.now(timezone.utc)
+    advert = _company_advert("still-open")
+    feed = FakeCareers(CAREERS, by_phrase={job_scout.SEARCH_TERMS["HR"][0]: [advert]})
+    feed.listed = (frozenset({"lever/acme"}), frozenset({advert.external_id}))
+    runs(campus, [feed], now=now)
+
+    # Lever failed: the feeds that were read are some other company's.
+    feed.by_phrase = {}
+    feed.listed = (frozenset({"greenhouse/beta"}), frozenset())
+    assert runs(campus, [feed], now=now + timedelta(days=1)).withdrawn == 0
+    # And no feed was read at all.
+    feed.listed = None
+    assert runs(campus, [feed], now=now + timedelta(days=2)).withdrawn == 0
+    assert [r.status for r in _rows(campus)] == [STATUS_OPEN]
+
+
+@requires_db
+def test_a_company_feed_role_closes_after_its_time_on_the_board_whatever_else(campus, runs) -> None:
+    """The backstop for a company whose feed is never read again: removed from
+    the list, or the feeds switched off."""
+    now = datetime.now(timezone.utc)
+    runs(campus, [FakeCareers(CAREERS, by_phrase={job_scout.SEARCH_TERMS["HR"][0]: [_company_advert("aging")]})], now=now)
+    (row,) = _rows(campus)
+    with SessionLocal() as db:
+        db.execute(
+            update(Job)
+            .where(Job.id == row.id)
+            .values(created_at=now - job_scout.CAREERS_MAX_ON_BOARD - timedelta(days=1))
+        )
+        db.commit()
+    runs(campus, [FakeBoard(ADZUNA)], now=now)
+    assert [r.status for r in _rows(campus)] == [STATUS_CLOSED]
+
+
+@requires_db
+def test_a_company_feed_closes_only_its_own_postings(campus, runs) -> None:
+    """Withdrawal reads the company feed's refs and nothing else: an Adzuna
+    posting or the office's own is never "no longer listed"."""
+    now = datetime.now(timezone.utc)
+    runs(campus, [_phrase_board(ADZUNA, HR=[_advert("HR Executive", company="Board Co")])], now=now)
+    with SessionLocal() as db:
+        db.add(Job(title="Office", company="O", degree_level=DegreeLevel.PG, posted_on=now, course_id=campus["gen"]))
+        db.commit()
+    feed = FakeCareers(CAREERS)
+    feed.listed = (frozenset({"lever/acme"}), frozenset())
+    assert runs(campus, [feed], now=now + timedelta(days=1)).withdrawn == 0
+    assert {r.status for r in _rows(campus)} == {STATUS_OPEN}
+
+
 @requires_db
 def test_an_agent_posting_is_closed_not_removed_and_an_office_posting_still_can_be(
     client, make_user, campus, runs
@@ -488,6 +596,7 @@ def test_a_run_leaves_one_system_receipt_the_sheet_reads(client, make_user, camp
     monkeypatch.setattr(settings, "adzuna_app_key", "key")
     monkeypatch.setattr(settings, "jooble_api_key", "")
     monkeypatch.setattr(settings, "job_scout_enabled", "")
+    monkeypatch.setattr(settings, "job_scout_company_boards", False)
     admin = make_user("scout-status", Role.ADMIN)
     now = datetime.now(timezone.utc)
     runs(campus, [_phrase_board(ADZUNA, HR=[_advert("HR Executive", company="Receipt Co")])], now=now)
@@ -507,7 +616,11 @@ def test_a_run_leaves_one_system_receipt_the_sheet_reads(client, make_user, camp
     assert body["active"] is True
     assert body["created"] == 1 and body["closed"] is not None
     assert datetime.fromisoformat(body["last_run_at"]) == now
-    assert [(s["key"], s["configured"]) for s in body["sources"]] == [("adzuna", True), ("jooble", False)]
+    assert [(s["key"], s["configured"]) for s in body["sources"]] == [
+        ("adzuna", True),
+        ("jooble", False),
+        ("careers", False),
+    ]
 
     student = make_user("scout-status-student", Role.STUDENT)
     assert client.get("/api/admin/jobs/scout-status", headers=student.headers).status_code == 403
@@ -546,6 +659,7 @@ def test_the_job_exits_zero_with_no_keys_and_one_when_every_board_failed(monkeyp
         busy = False
         dry_run = False
         leaves = calls = found = stale = suspicious = kept = created = merged = duplicates = capped = closed = 0
+        withdrawn = 0
         per_leaf: dict = {}
         errors = {ADZUNA: "Adzuna could not be reached (ConnectError)."}
         every_source_failed = True

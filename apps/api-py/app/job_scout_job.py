@@ -74,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
             if not sources:
                 log.info(
                     "Job agent is off: no board has a key (ADZUNA_APP_ID/ADZUNA_APP_KEY, "
-                    "JOOBLE_API_KEY), or JOB_SCOUT_ENABLED=false. Nothing searched."
+                    "JOOBLE_API_KEY), JOB_SCOUT_COMPANY_BOARDS is not true, or "
+                    "JOB_SCOUT_ENABLED=false. Nothing searched."
                 )
                 return 0
             with SessionLocal() as db:
@@ -86,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
             log.info(
                 "Job agent %s: %d stream(s), %d search(es), %d advert(s) found, %d too old, "
                 "%d suspicious, %d fresher role(s) kept, %d posted, %d widened to another "
-                "specialization, %d already on the board, %d over the daily limit, %d closed. "
+                "specialization, %d already on the board, %d over the daily limit, %d closed "
+                "(%d no longer on the company's own page). "
                 "Per stream: %s.",
                 "dry run (nothing written)" if summary.dry_run else "run complete",
                 summary.leaves,
@@ -100,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                 summary.duplicates,
                 summary.capped,
                 summary.closed,
+                summary.withdrawn,
                 ", ".join(f"{name} {n}" for name, n in summary.per_leaf.items()) or "none",
             )
             for provider, sentence in summary.errors.items():

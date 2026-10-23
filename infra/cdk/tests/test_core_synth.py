@@ -1480,7 +1480,9 @@ def test_the_job_agent_keys_and_schedule_are_opt_in_one_board_at_a_time(imported
     and none of it rides in the import mirror or in step 9a."""
     for template in (imported, hardened):
         assert not (JOB_SCOUT_SECRETS & _container_secret_names(template))
-        assert JOB_SCOUT_SCHEDULE not in _schedule_names(template)
+    assert JOB_SCOUT_SCHEDULE not in _schedule_names(imported)
+    # No board and no company feeds: nothing to run, so no schedule.
+    assert JOB_SCOUT_SCHEDULE not in _schedule_names(_job_scout(jobScoutCompanies="false"))
 
     adzuna = _job_scout(jobScoutAdzuna="true")
     assert JOB_SCOUT_SECRETS & _container_secret_names(adzuna) == {"ADZUNA_APP_ID", "ADZUNA_APP_KEY"}
@@ -1497,6 +1499,43 @@ def test_the_job_agent_keys_and_schedule_are_opt_in_one_board_at_a_time(imported
     step_9a = _job_scout(hardenEcs="false", jobScoutAdzuna="true", jobScoutJooble="true")
     assert not (JOB_SCOUT_SECRETS & _container_secret_names(step_9a))
     assert JOB_SCOUT_SCHEDULE not in _schedule_names(step_9a)
+
+
+def _api_environment(template: Template) -> dict[str, str]:
+    return {
+        v["Name"]: v["Value"]
+        for r in template.to_json()["Resources"].values()
+        if r["Type"] == "AWS::ECS::TaskDefinition"
+        for c in r["Properties"]["ContainerDefinitions"]
+        for v in c.get("Environment", [])
+    }
+
+
+def test_the_company_job_feeds_are_a_variable_and_a_schedule_and_no_secret() -> None:
+    """The companies' own feeds need no key, so the flag can never stop a task
+    from starting: one plain variable, the schedule, and no secret. Neither
+    rides in step 9a, whose task definition must not change."""
+    on = _job_scout(jobScoutCompanies="true", jobScoutAdzuna="false", jobScoutJooble="false")
+    assert _api_environment(on).get("JOB_SCOUT_COMPANY_BOARDS") == "true"
+    assert JOB_SCOUT_SCHEDULE in _schedule_names(on)
+    assert not (JOB_SCOUT_SECRETS & _container_secret_names(on))
+
+    off = _job_scout(jobScoutCompanies="false")
+    assert "JOB_SCOUT_COMPANY_BOARDS" not in _api_environment(off)
+
+    step_9a = _job_scout(hardenEcs="false", jobScoutCompanies="true")
+    assert "JOB_SCOUT_COMPANY_BOARDS" not in _api_environment(step_9a)
+    assert JOB_SCOUT_SCHEDULE not in _schedule_names(step_9a)
+
+
+def test_cdk_json_turns_the_company_job_feeds_on(hardened: Template) -> None:
+    """The owner asked for jobs on the board with no sign-up anywhere, and the
+    company feeds are how. cdk.json is the file that remembers it: a flag
+    passed only at deploy time would be dropped by the next deploy of any
+    other `core-*` option, silently (the apiArm64 lesson)."""
+    assert CDK_JSON_CONTEXT.get("jobScoutCompanies") is True
+    assert _api_environment(hardened).get("JOB_SCOUT_COMPANY_BOARDS") == "true"
+    assert JOB_SCOUT_SCHEDULE in _schedule_names(hardened)
 
 
 def test_the_interview_audio_directory_is_named_and_not_inferred(hardened: Template) -> None:

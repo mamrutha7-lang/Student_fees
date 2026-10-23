@@ -195,7 +195,7 @@ export interface JobPostingRow {
   tracks: string[];
   /** "HR · DM", or EVERY_TRACK for the empty list. */
   tracksLabel: string;
-  /** The Source column: "Office", "Adzuna" or "Jooble". */
+  /** The Source column: "Office", "Adzuna", "Jooble" or "Company careers page". */
   sourceLabel: string;
   /** Found by the daily job agent. Such a posting is CLOSED, never removed:
    *  a removed row is forgotten and the agent would post it again. */
@@ -203,7 +203,11 @@ export interface JobPostingRow {
 }
 
 /** What the Source column calls each origin. */
-const SOURCE_LABELS: Record<string, string> = { adzuna: 'Adzuna', jooble: 'Jooble' };
+const SOURCE_LABELS: Record<string, string> = {
+  adzuna: 'Adzuna',
+  jooble: 'Jooble',
+  careers: 'Company careers page',
+};
 export const OFFICE_SOURCE_LABEL = 'Office';
 
 /** What a cell says where the posting names no college, course or track. The
