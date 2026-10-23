@@ -162,6 +162,13 @@
     </div>
   </div>
 
+  @if (scoutLine(); as line) {
+    <div class="jobs-scout" [class.jobs-scout--warn]="scoutFailed()" role="status">
+      <span class="icon" aria-hidden="true">{{ scoutFailed() ? 'warning' : 'work' }}</span>
+      <span>{{ line }}</span>
+    </div>
+  }
+
   <div class="notice accent jobs-gaps">
     <span class="icon" aria-hidden="true">info</span>
     <div>

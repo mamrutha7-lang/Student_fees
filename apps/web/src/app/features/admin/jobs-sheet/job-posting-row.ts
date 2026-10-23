@@ -35,6 +35,7 @@
  * and "Every track" and never a dash, which would read as "nobody".
  */
 
+import { isAgentPosting } from '../../../core/job-source';
 import { plural } from '../../../shared/text/plural.pipe';
 
 /** Rows per page the status bar offers, and the one it starts on. */
@@ -107,6 +108,21 @@ export interface JobPostingApiRow {
   /** B12.2. `open` or `closed`, as the office asserts it — and the ONLY thing
    *  the student and alumni feeds filter on. */
   status: string;
+  /** `office` for a posting typed here, else the board the daily job agent
+   *  found it on (`adzuna`, `jooble`). Optional so a row from before the field
+   *  existed reads as the office's, which it is. */
+  source?: string;
+}
+
+/** `ScoutStatusOut` in `app/routers/console.py`: what the daily job agent
+ *  last did. `last_run_at` null means it has never run here. */
+export interface ScoutStatusApi {
+  active: boolean;
+  sources: { key: string; name: string; configured: boolean }[];
+  last_run_at: string | null;
+  created: number | null;
+  closed: number | null;
+  errors: Record<string, string>;
 }
 
 /** `AdminCatalogueCourseOut` in `app/routers/admin_catalogue.py`, narrowed to
@@ -179,7 +195,16 @@ export interface JobPostingRow {
   tracks: string[];
   /** "HR · DM", or EVERY_TRACK for the empty list. */
   tracksLabel: string;
+  /** The Source column: "Office", "Adzuna" or "Jooble". */
+  sourceLabel: string;
+  /** Found by the daily job agent. Such a posting is CLOSED, never removed:
+   *  a removed row is forgotten and the agent would post it again. */
+  isAgentPosting: boolean;
 }
+
+/** What the Source column calls each origin. */
+const SOURCE_LABELS: Record<string, string> = { adzuna: 'Adzuna', jooble: 'Jooble' };
+export const OFFICE_SOURCE_LABEL = 'Office';
 
 /** What a cell says where the posting names no college, course or track. The
  *  server's reading, spelled out: absent is WIDEST, not narrowest. */
@@ -350,6 +375,8 @@ export function toJobPostingRow(posting: JobPostingApiRow): JobPostingRow {
     courseLabel: posting.course_id === null ? EVERY_COURSE : posting.course_name ?? 'Unnamed course',
     tracks,
     tracksLabel: tracks.length === 0 ? EVERY_TRACK : tracks.join(' · '),
+    sourceLabel: SOURCE_LABELS[posting.source ?? ''] ?? OFFICE_SOURCE_LABEL,
+    isAgentPosting: isAgentPosting(posting.source),
   };
 }
 

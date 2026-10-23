@@ -362,7 +362,11 @@ def _jobs(db: Session, student_id: str) -> dict[str, Any]:
         {
             "label": f"Apply: {j['title']}",
             "route": "/student/jobs",
-            "reason": f"Eligible — {round(j.get('match_percent') or 0)}% match",
+            "reason": (
+                f"Eligible — {round(j['match_percent'])}% match"
+                if j.get("match_percent") is not None
+                else "Eligible — skills not listed"
+            ),
         }
         for j in eligible[:4]
     ]
