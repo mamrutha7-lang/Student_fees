@@ -56,9 +56,10 @@ Adzuna's terms require every advert shown to carry **"Jobs by Adzuna"** with a l
    - A closed posting never comes back.
    - At most 5 new postings per specialization per morning (`JOB_SCOUT_NEW_PER_SPECIALIZATION`), newest first. Kept for 30 days, that is at most about 150 agent postings on one student's board.
    - An office posting with no course only counts as the same advert inside its own college, or when it names no college.
-5. **Matches skills.** Any skill-catalogue name or alias in the advert becomes a `required_skills` slug. A posting that lists no skills shows **"Skills not listed"** to the student instead of a match %, office postings included. It used to say 100%.
-6. **Closes its own old postings.** An agent posting more than 30 days old (`JOB_SCOUT_MAX_AGE_DAYS`) is closed, and so is one whose course is gone. Deleting a college clears a posting's college and course, and a posting with neither would otherwise reach every student of that specialization in every college. The office's own postings are never touched.
-7. **Leaves a receipt.** It writes one audit row (`job_scout_run`, actor `SYSTEM`), which is what the sheet's status line reads.
+5. **Keeps the description.** The board's summary of the advert (up to 2,000 characters) is the posting's description, which a student opens with **View JD** under the row. The full text stays on the employer's page, behind Apply, and the panel says so.
+6. **Matches skills.** Any skill-catalogue name or alias in the advert becomes a `required_skills` slug. A posting that lists no skills shows **"Skills not listed"** to the student instead of a match %, office postings included. It used to say 100%.
+7. **Closes its own old postings.** An agent posting more than 30 days old (`JOB_SCOUT_MAX_AGE_DAYS`) is closed, and so is one whose course is gone. Deleting a college clears a posting's college and course, and a posting with neither would otherwise reach every student of that specialization in every college. The office's own postings are never touched.
+8. **Leaves a receipt.** It writes one audit row (`job_scout_run`, actor `SYSTEM`), which is what the sheet's status line reads.
 
 **Two runs at once:** the run holds a Postgres advisory lock (`RUN_LOCK_KEY`). A second run started while one is going (the Ops task pressed at 06:00) logs "another run is in progress" and exits 0, writing nothing.
 

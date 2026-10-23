@@ -1024,6 +1024,40 @@ test.describe('Student: profile, jobs and tools', () => {
     });
   });
 
+  test("Reading a posting's job description @TC-330", async ({ page, signIn }) => {
+    await signIn('student');
+    const row = jobRow(page, 'Financial Analyst');
+    const panel = page.getByRole('region', { name: 'Job description: Financial Analyst' });
+
+    await test.step('1. Open /student/jobs', async () => {
+      await page.goto('/student/jobs');
+      await expect(
+        row.getByRole('button', { name: 'View JD' }),
+        'TC-330 ER-1: the Financial Analyst row offers View JD',
+      ).toBeVisible();
+    });
+
+    await test.step('2. Click View JD on the Financial Analyst row', async () => {
+      await row.getByRole('button', { name: 'View JD' }).click();
+      await expect(panel, 'TC-330 ER-2: the description opens under the row').toContainText(
+        'Financial analysis and modeling.',
+      );
+      await expect(
+        row.getByRole('button', { name: 'Hide JD' }),
+        'TC-330 ER-2: the button reads Hide JD',
+      ).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    await test.step('3. Click Hide JD on the same row', async () => {
+      await row.getByRole('button', { name: 'Hide JD' }).click();
+      await expect(panel, 'TC-330 ER-3: the description closes').toHaveCount(0);
+      await expect(
+        row.getByRole('button', { name: 'View JD' }),
+        'TC-330 ER-3: the button reads View JD again',
+      ).toBeVisible();
+    });
+  });
+
   test('Filtering the jobs board @TC-313', async ({ page, signIn, request }, testInfo) => {
     await signIn('student');
     await apiSignIn(request, testInfo, 'admin');

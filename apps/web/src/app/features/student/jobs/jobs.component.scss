@@ -142,6 +142,63 @@
   color: var(--muted);
   text-decoration: underline;
 }
+/* "View JD": a quiet text button under the company, never a second CTA. */
+.jd-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand-purple);
+  cursor: pointer;
+}
+.jd-toggle:hover {
+  text-decoration: underline;
+}
+/* One glyph, turned over when open: `expand_less` is not in the icon subset,
+   and a glyph missing from it renders as nothing at all. */
+.jd-toggle .icon.open {
+  transform: rotate(180deg);
+}
+.jd-toggle:focus-visible {
+  outline: 2px solid var(--brand-purple);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* The JD sits in a row of its own under its posting. The cell spans every
+   column, so the first column's width rule must not reach it. */
+.jobs-table tr.jd-row td {
+  width: auto;
+  padding-top: 0;
+}
+.jd {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--tint-2);
+}
+.jd-head {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+.jd-text {
+  margin: 6px 0 0;
+  white-space: pre-line;
+  line-height: 1.55;
+}
+.jd-foot {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
 .loc {
   display: flex;
   align-items: center;

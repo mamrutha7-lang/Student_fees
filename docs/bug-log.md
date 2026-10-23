@@ -112,7 +112,7 @@ Entry format:
 - **Checked by:** `tests/test_job_agent_hostile.py` (each test seen failing
   first), `tests/test_job_scout.py`, `tests/test_job_sources.py`, the full
   backend suite, `ng test`, `ng build` and the web static checks.
-- **Status:** open PR, 2026-10-23.
+- **Status:** merged to `dev` 2026-10-23 (`bba6eb8`); not yet deployed.
 - **Left open:** the same title and company in two cities is still posted
   once (the dedupe key ignores the location). Deleting a key from
   `reep/external` while its `cdk.json` flag is on still stops the api from

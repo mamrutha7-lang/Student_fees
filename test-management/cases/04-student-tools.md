@@ -1423,3 +1423,47 @@ is no longer shown.
 
 The question and its answer stay in the student's REEP Agent conversation,
 which `/student/agent` shows too.
+
+---
+
+## TC-330 — Reading a posting's job description
+
+| Field | Value |
+|---|---|
+| ID | TC-330 |
+| Module | Student: jobs |
+| Priority | P2 |
+| Type | Functional, positive |
+| Automated test | `tests/04-student-tools.spec.ts`, title tagged `@TC-330` |
+
+### Pre-conditions
+
+1. The web app and the API are running as described in "Setup" in the index,
+   with a development `ENV` and the dev seed applied.
+2. You are signed in as the dev seed's student, and nothing else is signed in
+   as that account.
+3. The seeded Financial Analyst posting is open, with its seeded description.
+
+### Test data
+
+| Posting | Company | Description |
+|---|---|---|
+| Financial Analyst | Acme Capital | `Financial analysis and modeling.` |
+
+### Steps
+
+1. Open `/student/jobs`.
+2. Click View JD on the Financial Analyst row.
+3. Click Hide JD on the same row.
+
+### Expected results
+
+| # | After step | Expected result |
+|---|---|---|
+| ER-1 | 1 | The Financial Analyst row shows a "View JD" button under the company name. |
+| ER-2 | 2 | A "Job description" panel opens under the row and reads "Financial analysis and modeling.". The button now reads "Hide JD". |
+| ER-3 | 3 | The panel closes, and the button reads "View JD" again. |
+
+### Post-conditions
+
+None. Opening a description changes nothing on the server.
