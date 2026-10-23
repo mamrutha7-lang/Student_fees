@@ -1,17 +1,35 @@
 # The daily job agent (Job Scout)
 
-Every morning at **06:00 IST** the job agent searches two official job-board APIs, **Adzuna** and **Jooble**, for **fresher jobs and internships across India**. It searches once for every specialization the college offers and posts what it finds to the Jobs board. Each posting is aimed at exactly the students of that specialization. Once the two keys below are in place, it needs nobody.
+Every morning at **06:00 IST** the job agent looks for **fresher jobs and internships across India** and posts them to the Jobs board. It searches once for every specialization the college offers, and each posting is aimed at exactly the students of that specialization. It reads up to three kinds of source:
+
+- **Company careers pages (on, no key).** The public job feeds that companies publish through Greenhouse, Lever and SmartRecruiters, for the companies in `COMPANY_BOARDS` in `app/job_sources.py`. They need no key and no sign-up. They list only roles that are open today, each with a link to the company's own page. They carry fewer jobs than a job board: about 15 to 25 fresher roles on a first morning across all streams.
+- **Adzuna and Jooble (off until you add keys).** Two official job-board APIs that cover the whole market, so many more jobs. Each needs a free key; see "Adding Adzuna and Jooble" below.
+
+Once it is deployed, it needs nobody.
 
 | Piece | Where |
 |---|---|
 | What it searches, keeps and posts | `apps/api-py/app/job_scout.py` |
-| The two boards | `apps/api-py/app/job_sources.py` |
+| The sources, and the list of companies | `apps/api-py/app/job_sources.py` (`COMPANY_BOARDS`) |
 | The scheduled entry point | `apps/api-py/app/job_scout_job.py` (`python -m app.job_scout_job [--dry-run]`) |
 | The schedule | `reep-job-scout-daily`, `cron(30 0 * * ? *)` in `infra/cdk/reep_core/stack.py` |
 | Run it now | Actions → **Ops task** → `job-scout-dry-run`, then `job-scout` |
 | What it did | The line at the top of **Job postings** (`GET /api/admin/jobs/scout-status`) |
 
-## One-time setup
+## Company careers pages
+
+- **Switched on by** `"jobScoutCompanies": true` in `infra/cdk/cdk.json`. That puts `JOB_SCOUT_COMPANY_BOARDS=true` in the api task definition and creates the schedule. No secret is involved, so it cannot stop a task from starting.
+- **Adding a company is one line** in `COMPANY_BOARDS`: the system (`greenhouse`, `lever` or `smartrecruiters`), the company's name on it, and the name to show. The name on the system is the part of the careers URL after `boards.greenhouse.io/`, `jobs.lever.co/` or `jobs.smartrecruiters.com/`. Check that the feed answers before adding it: `https://boards-api.greenhouse.io/v1/boards/<name>/jobs`, `https://api.lever.co/v0/postings/<name>?mode=json` or `https://api.smartrecruiters.com/v1/companies/<name>/postings?country=in`.
+- **What it keeps.** A feed cannot be searched, so the rules are applied to every role on it:
+  - in India only;
+  - a title or level that says entry or intern ("Trainee", "Executive", "Analyst", "Intern"; SmartRecruiters' own level must be entry level or internship). "Staff", "Account Executive" and levelled titles such as "Analyst II" are not entry roles;
+  - a topic per stream, in `CAREERS_TOPICS` (for HR: HR, people, payroll, recruiting; for supply chain: procurement, buyer, demand planning; and so on);
+  - then the same fresher, scam and daily-limit rules as every other source.
+- **It reads the whole description** to judge the years asked for, and stores the first 2,000 characters for **View JD**.
+- **When it closes.** A role on a company's own feed is open today however long ago it was first posted, so the 30-day rule does not apply. Instead a posting closes **the morning the company stops listing it**, as long as that company's feed was read in full that morning. As a backstop it closes after 60 days on the board. A role first posted more than 120 days ago is treated as a standing "always hiring" advert and not posted.
+- **A company that fails** (moved its board, answered 404) is logged by name and skipped; the others carry on. A company that could not be read closes nothing.
+
+## Adding Adzuna and Jooble
 
 1. **Get the keys (free).**
    - Adzuna: sign up at <https://developer.adzuna.com> and create an application. You get an *application id* and an *application key*; both are needed.
@@ -27,7 +45,7 @@ Every morning at **06:00 IST** the job agent searches two official job-board API
    - Merge, then deploy the app with `deploy.yml`.
    - Deploy `reep-core` with `cdk-deploy.yml`, option `core-9b`: run a diff first, then deploy.
 5. **Prove it.**
-   - Run the Ops task `job-scout-dry-run`. It asks both boards and judges every advert, then writes nothing; read its log.
+   - Run the Ops task `job-scout-dry-run`. It asks every source and judges every advert, then writes nothing; read its log.
    - Then run `job-scout` once. The **Job postings** sheet now reads "Job agent last ran …".
    - From the next morning it runs by itself.
 
@@ -58,7 +76,7 @@ Adzuna's terms require every advert shown to carry **"Jobs by Adzuna"** with a l
    - An office posting with no course only counts as the same advert inside its own college, or when it names no college.
 5. **Keeps the description.** The board's summary of the advert (up to 2,000 characters) is the posting's description, which a student opens with **View JD** under the row. The full text stays on the employer's page, behind Apply, and the panel says so.
 6. **Matches skills.** Any skill-catalogue name or alias in the advert becomes a `required_skills` slug. A posting that lists no skills shows **"Skills not listed"** to the student instead of a match %, office postings included. It used to say 100%.
-7. **Closes its own old postings.** An agent posting more than 30 days old (`JOB_SCOUT_MAX_AGE_DAYS`) is closed, and so is one whose course is gone. Deleting a college clears a posting's college and course, and a posting with neither would otherwise reach every student of that specialization in every college. The office's own postings are never touched.
+7. **Closes its own old postings.** An Adzuna or Jooble posting more than 30 days old (`JOB_SCOUT_MAX_AGE_DAYS`) is closed, and so is any agent posting whose course is gone. A company careers posting closes when the company stops listing it (see above). Deleting a college clears a posting's college and course, and a posting with neither would otherwise reach every student of that specialization in every college. The office's own postings are never touched.
 8. **Leaves a receipt.** It writes one audit row (`job_scout_run`, actor `SYSTEM`), which is what the sheet's status line reads.
 
 **Two runs at once:** the run holds a Postgres advisory lock (`RUN_LOCK_KEY`). A second run started while one is going (the Ops task pressed at 06:00) logs "another run is in progress" and exits 0, writing nothing.
@@ -70,19 +88,19 @@ Adzuna's terms require every advert shown to carry **"Jobs by Adzuna"** with a l
 ## Turning it off
 
 - **For a morning or for good, keys kept:** set `JOB_SCOUT_ENABLED=false` on the task. Every run then says it is off and does nothing.
-- **For one board:** set its flag back to `false` in `cdk.json` and deploy `reep-core`.
+- **For one source:** set its flag (`jobScoutCompanies`, `jobScoutAdzuna`, `jobScoutJooble`) back to `false` in `cdk.json` and deploy `reep-core`.
 - **Postings already up:** close them on the Job postings sheet, or wait 30 days and they close themselves.
 
 ## What it never does
 
-- **It never sends a student's data anywhere.** A search carries a phrase from the catalogue, a location and the key. `app/job_sources.py` imports no model, and a test reads its imports to keep it that way.
+- **It never sends a student's data anywhere.** A search carries a phrase from the catalogue, a location and the key; a company feed is asked only for its list of jobs (GET, paging and a country). `app/job_sources.py` imports no model, and a test reads its imports to keep it that way.
 - **It never logs or reports a key.**
   - Adzuna takes its key in the query string and Jooble in the URL path.
   - httpx's own request line is redacted by a filter in `job_sources.py`.
   - Sentry's breadcrumbs and `http.client` spans are scrubbed in `app/telemetry_scrub.py`.
   - Every failure is re-raised without the URL.
   - `tests/test_job_sources.py` proves all of this against the real Sentry SDK.
-- **It never scrapes.** LinkedIn and Naukri forbid scraping and block it within days, so a scraper would be a morning job that quietly stops working.
+- **It never scrapes.** LinkedIn and Naukri forbid scraping and block it within days, so a scraper would be a morning job that quietly stops working. The company feeds are public APIs that Greenhouse, Lever and SmartRecruiters publish so that companies' jobs can be listed elsewhere.
 
 ## Checking a morning
 

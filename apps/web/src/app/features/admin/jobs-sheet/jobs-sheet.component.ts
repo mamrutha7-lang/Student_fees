@@ -380,7 +380,7 @@ export class AdminJobsSheetComponent {
       .join(' · ');
     if (!scout.active) {
       return scout.last_run_at === null
-        ? `Job agent off: no job board has a key (${boards})`
+        ? `Job agent off: no job source is switched on (${boards})`
         : `Job agent off · last ran ${this.formatRunAt(scout.last_run_at)}`;
     }
     if (scout.last_run_at === null) return `Job agent on, first run at 06:00 IST · ${boards}`;

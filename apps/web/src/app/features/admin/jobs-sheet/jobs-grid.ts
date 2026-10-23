@@ -188,7 +188,7 @@ export const JOBS_COLUMNS: ColDef<JobPostingRow>[] = [
     headerName: 'Source',
     minWidth: 120,
     headerTooltip:
-      'Office for a posting typed here; Adzuna or Jooble for one the daily job agent found. An agent posting can be closed but not removed',
+      "Office for a posting typed here; Adzuna, Jooble or a company's careers page for one the daily job agent found. An agent posting can be closed but not removed",
   },
   {
     colId: 'college',

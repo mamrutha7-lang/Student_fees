@@ -142,6 +142,10 @@
   color: var(--muted);
   text-decoration: underline;
 }
+/* A company's own feed: where it came from, and no link (Apply opens it). */
+.source-credit--plain {
+  text-decoration: none;
+}
 /* "View JD": a quiet text button under the company, never a second CTA. */
 .jd-toggle {
   display: inline-flex;

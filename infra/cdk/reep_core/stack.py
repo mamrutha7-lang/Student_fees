@@ -515,6 +515,12 @@ class CoreStack(Stack):
         # leave the task definition byte-identical to the import mirror.
         job_scout_adzuna = harden_ecs and flag("jobScoutAdzuna", False)
         job_scout_jooble = harden_ecs and flag("jobScoutJooble", False)
+        # The companies' own public job feeds (Greenhouse, Lever,
+        # SmartRecruiters; `app/job_sources.py` COMPANY_BOARDS). No key and no
+        # secret, so nothing here can stop a task from starting: the flag puts
+        # one plain variable in the task definition and the schedule follows
+        # it. `harden_ecs` for the same immutable-task-definition reason.
+        job_scout_companies = harden_ecs and flag("jobScoutCompanies", False)
         if ses_managed and not (ses_identity_domain and ses_configuration_set):
             raise ValueError("sesManaged needs both sesIdentityDomain and sesConfigurationSet -- the mirror must name what it is adopting")
         vault_lock_compliance = flag("vaultLockCompliance", False)
@@ -1860,6 +1866,8 @@ class CoreStack(Stack):
             # Same `harden_ecs` gate as every variable above.
             api_environment["DB_POOL_SIZE"] = str(API_DB_POOL_SIZE)
             api_environment["DB_MAX_OVERFLOW"] = str(API_DB_MAX_OVERFLOW)
+            if job_scout_companies:
+                api_environment["JOB_SCOUT_COMPANY_BOARDS"] = "true"
 
         def _api_task_def(cid: str, family: str, image_tag: str) -> tuple[ecs.FargateTaskDefinition, ecs.ContainerDefinition]:
             """One api task definition. ONE helper for the three families
@@ -2342,21 +2350,22 @@ class CoreStack(Stack):
                 ),
             )
 
-        if job_scout_adzuna or job_scout_jooble:
+        if job_scout_adzuna or job_scout_jooble or job_scout_companies:
             # THE DAILY JOB AGENT, AT 06:00 IST (app/job_scout_job.py): fresher
-            # jobs and internships for every specialization, from Adzuna and
-            # Jooble, on the Jobs board before students open it.
+            # jobs and internships for every specialization, from Adzuna,
+            # Jooble and the companies' own job feeds, on the Jobs board before
+            # students open it.
             #
-            # GATED ON A BOARD HAVING ITS KEYS IN THE TASK DEFINITION, the
-            # leave-today rule: a schedule with no key behind it is a job that
-            # wakes every morning, says "not configured" and posts nothing.
+            # GATED ON A SOURCE BEING ON IN THE TASK DEFINITION, the leave-today
+            # rule: a schedule with nothing behind it is a job that wakes every
+            # morning, says "not configured" and posts nothing.
             #
             # 00:30 UTC is clear of every other clock here: the RDS backup
             # (20:30-21:30) and maintenance (Sun 21:30-22:30) windows, the AWS
             # Backup rule (19:00), the four nightly jobs (18:00-21:30) and the
             # leave announcement (01:30). It reads the catalogue, writes a few
-            # dozen `jobs` rows and calls two public APIs through the NAT
-            # instance, the egress the Google JWKS fetch already uses.
+            # dozen `jobs` rows and calls public APIs through the NAT instance,
+            # the egress the Google JWKS fetch already uses.
             #
             # It reuses the api task definition and so the scheduler role's
             # existing ecs:RunTask on `{project}-api:*`; no new IAM.
