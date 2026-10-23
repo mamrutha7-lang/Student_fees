@@ -112,7 +112,11 @@ Entry format:
 - **Checked by:** `tests/test_job_agent_hostile.py` (each test seen failing
   first), `tests/test_job_scout.py`, `tests/test_job_sources.py`, the full
   backend suite, `ng test`, `ng build` and the web static checks.
-- **Status:** merged to `dev` 2026-10-23 (`bba6eb8`); not yet deployed.
+- **Status:** merged to `dev` 2026-10-23 (`bba6eb8`), promoted to `main` 2026-10-23
+  ([PR #218](https://github.com/darshani8/reep-/pull/218), [PR #220](https://github.com/darshani8/reep-/pull/220)); deployed
+  2026-10-23 by [Deploy run 142](https://github.com/darshani8/reep-/actions/runs/39913001218).
+  The boards are still off: the agent posts nothing until the keys are in
+  `reep/external` and `jobScoutAdzuna` / `jobScoutJooble` are set in `cdk.json`.
 - **Left open:** the same title and company in two cities is still posted
   once (the dedupe key ignores the location). Deleting a key from
   `reep/external` while its `cdk.json` flag is on still stops the api from
