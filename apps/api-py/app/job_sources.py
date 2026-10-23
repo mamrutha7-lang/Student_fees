@@ -811,15 +811,18 @@ class CareersSource(_Paced):
                 if not content or (isinstance(total, int) and len(rows) >= total):
                     complete = True
                     break
-            return _parse_postings(board, rows, _smartrecruiters_posting), complete
+            postings, skipped = _parse_postings(board, rows, _smartrecruiters_posting)
+            return postings, complete and not skipped
         self._pace()
         if board.ats == LEVER:
             body = _careers_get(self._client, board.company, LEVER_URL.format(token=board.token), {"mode": "json"})
-            return _parse_postings(board, body, _lever_posting), True
+            postings, skipped = _parse_postings(board, body, _lever_posting)
+            return postings, not skipped
         if board.ats == GREENHOUSE:
             body = _careers_get(self._client, board.company, GREENHOUSE_URL.format(token=board.token))
             jobs = body.get("jobs") if isinstance(body, dict) else None
-            return _parse_postings(board, jobs, _greenhouse_posting), True
+            postings, skipped = _parse_postings(board, jobs, _greenhouse_posting)
+            return postings, not skipped
         raise SourceError(CAREERS, f"{board.company} names a careers system this module cannot read.")
 
     def _with_description(self, posting: _Posting) -> FoundJob:
@@ -846,8 +849,11 @@ class CareersSource(_Paced):
 
 def _parse_postings(
     board: CompanyBoard, rows: Any, parse: Callable[[CompanyBoard, Any], _Posting | None]
-) -> list[_Posting]:
-    """`_parse_page`'s rule for a company feed: one bad row costs one row."""
+) -> tuple[list[_Posting], int]:
+    """`_parse_page`'s rule for a company feed: one bad row costs one row. The
+    count of rows that could not be read comes back too, because a row that
+    raised may be a role already on the board: its id is unknown, so that
+    morning the feed cannot say any role is gone (`still_listed`)."""
     if not isinstance(rows, list):
         raise SourceError(CAREERS, f"{board.company}'s careers page sent no list of jobs.")
     out: list[_Posting] = []
@@ -862,7 +868,7 @@ def _parse_postings(
             out.append(posting)
     if skipped:
         log.warning("Job agent: skipped %d job(s) from %s's careers page that could not be read.", skipped, board.company)
-    return out
+    return out, skipped
 
 
 def configured_providers() -> list[str]:

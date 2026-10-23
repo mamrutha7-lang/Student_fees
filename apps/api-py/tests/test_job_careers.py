@@ -403,6 +403,25 @@ def test_a_feed_cut_short_by_the_page_limit_closes_nothing(monkeypatch) -> None:
     assert "smartrecruiters/BoschGroup/101" in listed
 
 
+def test_a_row_that_could_not_be_read_means_the_feed_cannot_say_a_role_is_gone() -> None:
+    """A row that raises while it is read may be a role already on the board,
+    and its id is unknown, so that company closes nothing that morning. The
+    rows that were read still count as postings."""
+    unreadable = {
+        "id": "a9",
+        "text": "HR Executive",
+        "country": "IN",
+        "hostedUrl": "https://jobs.lever.co/acme/a9",
+        "categories": {"allLocations": 5},  # not a list: reading it raises
+    }
+    feeds = Feeds(**{"api.lever.co": httpx.Response(200, json=[LEVER_ROWS[0], unreadable])})
+    source = _source(feeds, boards=(ACME, BETA))
+    assert _titles(source.search("hr executive", internship=False)) == ["HR Executive"]
+    read, listed = source.still_listed()
+    assert read == {"greenhouse/beta"}, "a Lever feed with an unreadable row must not close Lever postings"
+    assert "lever/acme/a1" in listed
+
+
 def test_nothing_is_listed_before_a_feed_was_read() -> None:
     assert _source(Feeds()).still_listed() is None
 
