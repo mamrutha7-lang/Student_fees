@@ -26,6 +26,13 @@ Entry format:
 
 ## Open
 
+- **2026-10-23 — The job agent's "5 new postings a day per specialization"
+  is 5 per run.** `job_scout.run` counts `created` for each stream inside one
+  run, and nothing reads what earlier runs that day posted. With the one
+  06:00 schedule that is 5 a day. A second run on the same day (the Ops task's
+  `job-scout`) can post 5 more per stream. Seen on 2026-10-23: a dry run after
+  the first real run would have posted 5 more.
+  Fix if it matters: count today's agent postings per course before the loop.
 - **2026-10-23 — The student Jobs page promises job-alert emails nothing
   sends.** Its subtitle reads "auto alert emailed to matching students", but
   the only `job-alert` mail in the codebase is a demo row written by
@@ -61,6 +68,35 @@ Entry format:
   [REEP-API-3](https://bgs-college-of-engineering-and.sentry.io/issues/REEP-API-3):
   the address bounced on 2026-10-07 and Amazon SES now delivers nothing to it.
   No code fix needed; the office can lift the block on `/admin/mail`.
+
+## 2026-10-23 — A company job could be closed while the company still listed it
+
+- **Symptom:** found in review of
+  [PR #224](https://github.com/darshani8/reep-/pull/224), the keyless company
+  feeds, before any student saw it. If one row of a company's feed could not
+  be read, a job of that company already on the Jobs page would be closed the
+  same morning, although the company still listed it.
+- **Cause:** `job_sources._parse_postings` skips a row that raises, so that
+  row's id was missing from `CareersSource.still_listed()`, and the feed still
+  counted as read in full. `job_scout.close_withdrawn` then read the missing id
+  as "the company took this role down".
+- **Evidence:** the review of PR #224, and
+  `test_a_row_that_could_not_be_read_means_the_feed_cannot_say_a_role_is_gone`,
+  which fails on the code before the fix. Production was not affected: the
+  first real run (2026-10-23 10:04 UTC, before this fix was deployed) had no
+  company postings yet, and it closed 0.
+- **Fix:** `_parse_postings` returns how many rows it skipped, and a feed with
+  any skipped row is not read in full that morning, so it closes nothing. The
+  rows that were read are still searched and posted.
+- **Where:** [PR #225](https://github.com/darshani8/reep-/pull/225), commit
+  `38bb0e9`; `app/job_sources.py`, `tests/test_job_careers.py`.
+- **Checked by:** the test above (seen failing first), the job agent modules,
+  the full backend suite and CI.
+- **Status:** merged to `dev` 2026-10-23 (`892e096`), promoted to `main`
+  2026-10-23 ([PR #226](https://github.com/darshani8/reep-/pull/226),
+  [PR #227](https://github.com/darshani8/reep-/pull/227)); deployed
+  2026-10-23 by [Deploy run 144](https://github.com/darshani8/reep-/actions/runs/39954906486).
+- **Left open:** nothing.
 
 ## 2026-10-23 — The daily job agent could lose a whole morning, post scams and tell students "100% match"
 
@@ -115,8 +151,10 @@ Entry format:
 - **Status:** merged to `dev` 2026-10-23 (`bba6eb8`), promoted to `main` 2026-10-23
   ([PR #218](https://github.com/darshani8/reep-/pull/218), [PR #220](https://github.com/darshani8/reep-/pull/220)); deployed
   2026-10-23 by [Deploy run 142](https://github.com/darshani8/reep-/actions/runs/39913001218).
-  The boards are still off: the agent posts nothing until the keys are in
-  `reep/external` and `jobScoutAdzuna` / `jobScoutJooble` are set in `cdk.json`.
+  Adzuna and Jooble are still off (no keys). Since 2026-10-23 the agent posts
+  from the companies' own job feeds instead, which need no key
+  ([PR #224](https://github.com/darshani8/reep-/pull/224), `docs/job-scout.md`).
+  Its first real run that day posted 17 jobs.
 - **Left open:** the same title and company in two cities is still posted
   once (the dedupe key ignores the location). Deleting a key from
   `reep/external` while its `cdk.json` flag is on still stops the api from
