@@ -1946,3 +1946,53 @@ roster through the API.
 
 The faculty member is still disabled. Enable or remove them in the console;
 the automated test removes them through the API.
+
+---
+
+## TC-543 — A disabled student is emailed, and the office can send the email again
+
+| Field | Value |
+|---|---|
+| ID | TC-543 |
+| Module | Admin: student record, disable; email |
+| Priority | P2 |
+| Type | Functional, positive |
+| Automated test | None (manual only): the proof is an email in the student's inbox, and the automated suite does not read mail. Locally the API sends no mail unless `ACCOUNT_MAIL_ENABLED=true`, and then the message is only in the API's console log. |
+
+### Pre-conditions
+
+1. The common pre-conditions at the top of this file.
+2. The API can send mail: SES is configured (production), or locally the API
+   was started with `ACCOUNT_MAIL_ENABLED=true` and you can read its console log.
+3. A new student exists, named "E2E Student …", whose college address you can
+   read. Not the seeded student.
+
+### Test data
+
+| Field | Value |
+|---|---|
+| Reason | `E2E: checking the disabled email` |
+
+### Steps
+
+1. Open the student's record at `/admin/students/<id>`, click "More", then "Disable account".
+2. Type `E2E: checking the disabled email` into "Reason" and click "Disable account" in the box.
+3. Open the student's inbox (or the API's console log).
+4. Back on the record, click "More", then "Email the disabled notice".
+5. Click "Send email" in the box.
+
+### Expected results
+
+| # | After step | Expected result |
+|---|---|---|
+| ER-1 | 1 | The box says "They are emailed the same words now." and, under "Reason", that the reason is not in the email. |
+| ER-2 | 2 | The page says "<address> can no longer sign in, …" and "We emailed <address> to say the account is disabled and to contact the placement office. Your reason is not in the email." The line under the status chip ends "Emailed to them <date, time>." |
+| ER-3 | 3 | One email, "Your REEP account has been disabled", says "Your account has been disabled for security reasons. Contact the placement office (Main Admin) to resolve the issue." It does not contain the reason. |
+| ER-4 | 4 | A box "Email <name> that their account is disabled?" opens and says when they were last emailed about it. |
+| ER-5 | 5 | The box closes, the page says "We emailed <address> …", and a second copy of the same email arrives. |
+
+### Post-conditions
+
+The student is still disabled, and two messages are on Email delivery
+(`/admin/mail`) with the kind `account-disabled`. Enable or remove them in
+the console.

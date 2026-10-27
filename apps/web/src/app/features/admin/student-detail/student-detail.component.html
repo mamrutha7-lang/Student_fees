@@ -59,6 +59,11 @@
                   <button type="button" role="menuitem" (click)="askEnable()">
                     <span class="icon" aria-hidden="true">lock_open</span> Enable account
                   </button>
+                  @if (!isRemoved()) {
+                    <button type="button" role="menuitem" (click)="askNotice()">
+                      <span class="icon" aria-hidden="true">mail</span> Email the disabled notice
+                    </button>
+                  }
                 } @else if (!isRemoved()) {
                   <button type="button" role="menuitem" class="danger" (click)="askDisable()">
                     <span class="icon" aria-hidden="true">block</span> Disable account
@@ -110,7 +115,8 @@
       <p class="card-sub">
         They cannot sign in by any door, and every device they are signed in on is signed out now. When they
         try, they are told the account was disabled for a security reason and to contact the placement office.
-        Nothing in their record is removed, and you can enable the account again from this menu.
+        They are emailed the same words now. Nothing in their record is removed, and you can enable the account
+        again from this menu.
       </p>
       <div class="field">
         <label for="disable-reason">Reason</label>
@@ -122,7 +128,7 @@
           [value]="disableReason()"
           (input)="disableReason.set(disableInput.value)"
         />
-        <div class="help">Required. Kept on this student's history. The student is not shown it.</div>
+        <div class="help">Required. Kept on this student's history. The student is not shown it, and it is not in the email.</div>
       </div>
       <div class="actions">
         <button type="button" class="btn secondary" (click)="cancelDisable()">Cancel</button>
@@ -141,6 +147,27 @@
         <button type="button" class="btn secondary" (click)="cancelEnable()">Cancel</button>
         <button type="button" class="btn primary" [disabled]="busy()" (click)="enableAccount()">
           <span class="icon" aria-hidden="true">lock_open</span> Enable account
+        </button>
+      </div>
+    </div>
+  }
+
+  @if (noticeOpen()) {
+    <div class="card confirm" role="alertdialog" aria-labelledby="notice-title">
+      <h2 class="card-title" id="notice-title">Email {{ studentName() }} that their account is disabled?</h2>
+      <p class="card-sub">
+        @if (noticeSentLabel(); as sentAt) {
+          They were last emailed about it {{ sentAt }}. This sends it again.
+        } @else {
+          They have not been emailed about it yet.
+        }
+        The email says the account was disabled for security reasons and to contact the placement office. Your
+        reason is not in it.
+      </p>
+      <div class="actions">
+        <button type="button" class="btn secondary" (click)="cancelNotice()">Cancel</button>
+        <button type="button" class="btn primary" [disabled]="busy()" (click)="sendNotice()">
+          <span class="icon" aria-hidden="true">mail</span> Send email
         </button>
       </div>
     </div>
