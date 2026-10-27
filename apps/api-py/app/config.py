@@ -198,6 +198,13 @@ class Settings(BaseSettings):
     # ends up 403ing over keys in circulation") applied to mail: the act that
     # gives this deployment a transport is the decision to use it.
     badge_mail_enabled: str = ""
+    # The email a student gets when the Main Admin disables their account
+    # (app/account_mail.py, 2026-10-27). The same three states as
+    # `badge_mail_enabled`, for the same reason: "true" on (the console outbox,
+    # the test suite), "false" off, anything else DERIVED from
+    # `mail_configured`, so production sends and a laptop writes no SENT row
+    # about a message nobody received.
+    account_mail_enabled: str = ""
     # Link lifetimes, from the agreed plan: activation 7 days (a new staff
     # member may not check mail today); reset 1 hour (the account exists and
     # may already be under attack); an application's confirmation 24 hours.
@@ -1179,6 +1186,18 @@ class Settings(BaseSettings):
         a message nobody received.
         """
         text = self.badge_mail_enabled.strip().lower()
+        if text == "true":
+            return True
+        if text == "false":
+            return False
+        return self.mail_configured
+
+    @property
+    def account_mail_active(self) -> bool:
+        """Whether a disabled student is emailed (app/account_mail.py). Read
+        exactly as `badge_mail_active`: only "true" and "false" force it, and
+        anything else derives the answer from `mail_configured`."""
+        text = self.account_mail_enabled.strip().lower()
         if text == "true":
             return True
         if text == "false":

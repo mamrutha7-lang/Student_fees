@@ -90,8 +90,12 @@ _SECRET_PATH_SEGMENTS = (re.compile(r"(jooble\.org/api/)[^/?#\s'\"]+", re.IGNORE
 #: REQUEST — whose `reason` is the form's "Purpose" cell, free text and
 #: routinely medical. The module deliberately keeps that field out of every
 #: message it builds, and the mute is the layer that holds when somebody adds a
-#: debug line while chasing "why did this mail not go".
-MUTED_LOGGERS = frozenset({"app.mail_transport", "app.leave_mail", "app.badge_mail"})
+#: debug line while chasing "why did this mail not go". `app.badge_mail` and
+#: `app.account_mail` (the disabled-account notice) are muted for the same
+#: reason: each composes a message about a named student.
+MUTED_LOGGERS = frozenset(
+    {"app.mail_transport", "app.leave_mail", "app.badge_mail", "app.account_mail"}
+)
 
 #: Header names the SDK already substitutes under send_default_pii=False. They
 #: are removed here as well so the invariant holds if that flag is ever changed

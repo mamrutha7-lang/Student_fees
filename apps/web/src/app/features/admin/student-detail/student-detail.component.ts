@@ -307,7 +307,11 @@ export class AdminStudentDetailComponent {
       return `Removed from the roster ${formatMoment(login.deleted_at)}: ${login.delete_reason ?? 'no reason recorded'}.`;
     }
     if (login.disabled) {
-      return `Disabled ${formatMoment(login.disabled_at)} by ${login.disabled_by_name ?? 'a removed account'}: ${login.disable_reason ?? 'no reason recorded'}.`;
+      const emailed =
+        login.disabled_notice_sent_at === null
+          ? ' They have not been emailed about it.'
+          : ` Emailed to them ${formatMoment(login.disabled_notice_sent_at)}.`;
+      return `Disabled ${formatMoment(login.disabled_at)} by ${login.disabled_by_name ?? 'a removed account'}: ${login.disable_reason ?? 'no reason recorded'}.${emailed}`;
     }
     return null;
   });
@@ -1010,6 +1014,32 @@ export class AdminStudentDetailComponent {
     this.enableOpen.set(false);
   }
 
+  // The disabled notice (`POST /admin/users/{id}/disabled-notice`, the Main
+  // Admin's): the email that tells a disabled student so. Disabling sends it;
+  // this is for a student disabled before that, or one who says it never came.
+  readonly noticeOpen = signal(false);
+  readonly noticeSentLabel = computed(() => {
+    const sentAt = this.record()?.login.disabled_notice_sent_at ?? null;
+    return sentAt === null ? null : formatMoment(sentAt);
+  });
+
+  askNotice(): void {
+    this.menuOpen.set(false);
+    this.error.set(null);
+    this.flash.set(null);
+    this.noticeOpen.set(true);
+  }
+
+  cancelNotice(): void {
+    this.noticeOpen.set(false);
+  }
+
+  async sendNotice(): Promise<void> {
+    if (this.busy()) return;
+    const done = await this.accountAction('disabled-notice', null);
+    if (done) this.noticeOpen.set(false);
+  }
+
   async disableAccount(): Promise<void> {
     if (!this.canDisable()) return;
     const done = await this.accountAction('disable', { reason: this.disableReason().trim() });
@@ -1022,8 +1052,11 @@ export class AdminStudentDetailComponent {
     if (done) this.enableOpen.set(false);
   }
 
-  /** One of the two account posts; the server's own sentence is shown. */
-  private async accountAction(verb: 'disable' | 'enable', body: object | null): Promise<boolean> {
+  /** One of the account posts; the server's own sentence is shown. */
+  private async accountAction(
+    verb: 'disable' | 'enable' | 'disabled-notice',
+    body: object | null,
+  ): Promise<boolean> {
     const row = this.student();
     if (row === null) return false;
     this.busy.set(true);
