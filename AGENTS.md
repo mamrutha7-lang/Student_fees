@@ -893,7 +893,16 @@ reason is on the row AND on the trail, and the re-enable window is read against
 it. `enable` and `sign-out-everywhere` sit beside it. **The same two endpoints
 disable and enable a STUDENT (2026-10-17)**, from the More menu on the student's
 record, Main Admin only as they always were; a student has no 90-day enable
-window, because "create a new account instead" means nothing for one. **Deleting a faculty
+window, because "create a new account instead" means nothing for one. **A disabled
+STUDENT is emailed to say so (2026-10-27)**: `app/account_mail.py`, after the
+disable commits, carrying `DISABLED_SIGN_IN_MESSAGE` and never the office's
+reason; faculty are not mailed, because their disable is an offboarding. The
+switch is `ACCOUNT_MAIL_ENABLED`, three states like `BADGE_MAIL_ENABLED`, so
+production sends and a laptop writes no SENT row. "Email the disabled notice"
+on the record's More menu (`POST /api/admin/users/{id}/disabled-notice`) sends
+it for a block that was never mailed, which is every one before that date, and
+again when a student says it never came; the account line says when it last
+went. `tests/test_disabled_notice_mail.py`. **Deleting a faculty
 account from the console arrived on 2026-09-16** — remove-and-restore and
 delete-for-good behind an emailed code, in `routers/admin_deletion.py`; see
 "Deleting people and colleges from the console" below. Emptying a whole
