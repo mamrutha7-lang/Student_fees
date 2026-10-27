@@ -8,6 +8,9 @@
   POST   /api/admin/users/{user_id}/enable         within 90 days (B3.3); a
                                                    student at any time
   POST   /api/admin/users/{user_id}/sign-out-everywhere   (B3.6)
+  POST   /api/admin/users/{user_id}/disabled-notice   email a disabled
+                                                   student to say so
+                                                   (2026-10-27)
 
 Until 2026-09 a faculty login was minted only by `python -m app.grant_access` -
 on a production host, the GitHub "Ops task" workflow - and its activation link
@@ -64,13 +67,14 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import account_links
+from .. import account_links, account_mail
 from ..architecture_events import record_change
 from ..config import settings
 from ..db import get_db
 from ..identity import get_current_session
 from ..institution_domains import domain_of, provisionable_domains_for
 from ..mentor_history import release_mentees_of
+from ..models.mail import MailLog, MailStatus
 from ..models.user import Role, User
 from ..security import note_revocation
 from ..staff_placement import UNFILED, StaffPlacement, placement_for, placements_for, resolve_department
@@ -645,6 +649,11 @@ class AccountStateOut(BaseModel):
     #: it is stated rather than omitted for `links_revoked`'s reason: "nobody
     #: was moved" is a fact the admin wants confirmed, not an absent field.
     mentees_released: int = 0
+    #: The email that tells a disabled STUDENT so (app/account_mail.py):
+    #: "SENT", "FAILED", or None when none was attempted (a faculty account,
+    #: an enable, or mail switched off on this server). SENT means SES took
+    #: it, never that it arrived; the Email delivery screen says the rest.
+    notice_mail: str | None = None
     detail: str
 
 
@@ -770,11 +779,22 @@ def disable_account(
         "account %s (%s) DISABLED by %s: %s",
         user.email, user.role.value, session.get("email"), body.reason,
     )
+    # A STUDENT IS TOLD BY EMAIL (2026-10-27), after the commit so the mail
+    # never describes a block that did not land. Inline rather than in the
+    # background, so the sentence below can say whether it went. The block
+    # has landed whatever happens here, so nothing here may turn it into a 500.
+    try:
+        notice = account_mail.notify_student_disabled(db, user)
+    except Exception as exc:  # a database fault while writing the mail row
+        log.error("Disabled notice not written for account %s: %s", user.id, type(exc).__name__)
+        db.rollback()
+        notice = None
     return AccountStateOut(
         user_id=user.id, email=user.email, role=user.role.value, disabled=True,
         disabled_at=user.disabled_at, disable_reason=user.disable_reason,
         token_version=user.token_version, links_revoked=revoked,
         mentees_released=len(released),
+        notice_mail=notice.status.value if notice is not None else None,
         detail=(
             f"{user.email} can no longer sign in, and every device it held has "
             "been signed out. Nothing they wrote has been removed."
@@ -784,6 +804,84 @@ def disable_account(
                 if released
                 else ""
             )
+            + _notice_sentence(user, notice)
+        ),
+    )
+
+
+def _notice_sentence(user: User, notice: MailLog | None) -> str:
+    """What the screen says about the disabled notice, after the act's own
+    sentence. Nothing for a faculty account, which is never sent one."""
+    if user.role is not Role.STUDENT:
+        return ""
+    if notice is None:
+        return " No email was sent: email is switched off on this server."
+    if notice.status is MailStatus.SENT:
+        return (
+            f" We emailed {user.email} to say the account is disabled and to "
+            "contact the placement office. Your reason is not in the email."
+        )
+    return (
+        " The email telling them could not be sent. Email delivery has the "
+        "reason; press Email the disabled notice under More to try again."
+    )
+
+
+@users_router.post("/{user_id}/disabled-notice", response_model=AccountStateOut)
+def send_disabled_notice(
+    user_id: str,
+    session: dict = Depends(get_current_session),
+    db: Session = Depends(get_db),
+) -> AccountStateOut:
+    """Email a disabled student that their account is disabled (2026-10-27).
+
+    The way the students disabled before the mail existed are told, and the
+    way to try again when a student says it never came. Every press sends one
+    message (app/account_mail.py says how a double-tap still sends once). The
+    Main Admin's, like the disable itself. Writes no audit row: it changes no
+    account, and the `mail_logs` row it writes is the record, on the Email
+    delivery screen.
+    """
+    require_admin(session)
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found.")
+    if user.role is not Role.STUDENT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Only a student is sent this email.",
+        )
+    if user.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{user.email} was removed from the roster, so it is not sent this email.",
+        )
+    if user.disabled_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{user.email} is not disabled, so there is nothing to tell them.",
+        )
+    if not settings.account_mail_active:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email is switched off on this server, so nothing was sent.",
+        )
+    if not account_mail.mailable(user):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="This account has no email address to send to.",
+        )
+    row = account_mail.send_disabled_notice(db, user)
+    sent = row.status is MailStatus.SENT
+    return AccountStateOut(
+        user_id=user.id, email=user.email, role=user.role.value, disabled=True,
+        disabled_at=user.disabled_at, token_version=int(user.token_version or 0),
+        notice_mail=row.status.value,
+        detail=(
+            f"We emailed {user.email} to say the account is disabled and to contact "
+            "the placement office. Your reason is not in the email."
+            if sent
+            else "The email could not be sent. Email delivery has the reason."
         ),
     )
 

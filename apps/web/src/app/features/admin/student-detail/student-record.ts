@@ -216,6 +216,10 @@ export interface Login360Out {
   disabled_at: string | null;
   disable_reason: string | null;
   disabled_by_name: string | null;
+  /** 2026-10-27: when the student was last emailed that this block is in
+   *  place, or null if they never were (every block before that date). Sent
+   *  to the Main Admin alone, like the reason. */
+  disabled_notice_sent_at: string | null;
   /** 2026-09-16: set when the account is REMOVED from the roster (rows kept),
    *  with the reason the office typed. Null on a listed student. */
   deleted_at: string | null;

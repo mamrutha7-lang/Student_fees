@@ -80,6 +80,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from .. import account_mail
 from ..db import get_db
 from ..governance import ancestry_of_student, require_capability
 from ..identity import get_current_session
@@ -178,6 +179,10 @@ class Login360Out(BaseModel):
     disabled_at: datetime | None
     disable_reason: str | None
     disabled_by_name: str | None
+    #: When the student was last emailed that this block is in place
+    #: (app/account_mail.py); None if they never were, which is every student
+    #: disabled before 2026-10-27. The Main Admin's, like the reason.
+    disabled_notice_sent_at: datetime | None = None
     #: REMOVED from the roster (2026-09-16): the record is reachable by id
     #: while the account is off every list. Null on a listed student.
     deleted_at: datetime | None = None
@@ -472,6 +477,7 @@ def _login_panel(db: Session, user: User) -> Login360Out:
         disabled_at=user.disabled_at,
         disable_reason=user.disable_reason,
         disabled_by_name=disabled_by,
+        disabled_notice_sent_at=account_mail.last_sent_at(db, user),
         deleted_at=user.deleted_at,
         delete_reason=user.delete_reason,
         last_login_at=user.last_login_at,
@@ -846,6 +852,7 @@ def student_360(
                 "recent_sign_ins": [],
                 "disable_reason": None,
                 "disabled_by_name": None,
+                "disabled_notice_sent_at": None,
                 "delete_reason": None,
             }
         )
