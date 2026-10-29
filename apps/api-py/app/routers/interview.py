@@ -87,7 +87,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Final
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
@@ -291,6 +291,28 @@ class _UserSessionCapReached(Exception):
     through no act of their own. A stale-heartbeat row is a dead session,
     whatever its status column still claims.
     """
+
+
+class _FleetFull(Exception):
+    """Every interview the deployment may run at once is already running, so
+    1013 — `settings.interview_max_concurrent`, counted over the whole fleet.
+
+    The per-process _LIMITER cannot answer this: it sees one task, and
+    autoscaling decides how many tasks there are. The number it guards is a
+    budget — Bedrock's concurrent-stream quota for the voice model, or a lower
+    ceiling the college chose — and going past it does not queue the student,
+    it fails them upstream AFTER their session row and attempt were written.
+    Raised from `_open_records` before any write, like its two siblings, so a
+    refused student loses nothing and can press Start again in a minute.
+    """
+
+
+# The fleet count below is count-then-insert ACROSS students, so it is
+# serialized by one lock for the whole deployment rather than the per-student
+# hashtext() key: two different students racing for the last slot must queue
+# behind each other. Outside the int4 range on purpose, so it can never equal a
+# hashtext() value; "fleetcap" in ASCII, as job_scout.RUN_LOCK_KEY is "jobscout".
+_FLEET_LOCK_KEY: Final[int] = 0x666C656574636170
 
 
 # A `running` row whose heartbeat is older than this is treated as dead for the
@@ -1495,6 +1517,25 @@ async def interview(websocket: WebSocket) -> None:
             "You already have a mock interview open. Close it and try again.",
         )
         return
+    except _FleetFull as exc:
+        # 1013, the code and sentence the per-process cap already uses: to the
+        # student "this task is full" and "the deployment is full" are the same
+        # fact, and the client already reads 1013 as "try again in a few
+        # minutes". WARNING, because hitting it is the signal to raise the
+        # quota or the ceiling, and the operator should see how often.
+        _LIMITER.release(user_id)
+        log.warning(
+            "[conn=%s] WS /api/interview -> %d: %s interviews live fleet-wide "
+            "(fleet ceiling %d)",
+            conn_id,
+            _CLOSE_OVERLOADED,
+            exc,
+            settings.interview_max_concurrent,
+        )
+        await _close_downstream(
+            websocket, _CLOSE_OVERLOADED, "Too many interviews in progress"
+        )
+        return
     except _DailyCapReached as exc:
         # 4015: a refusal with a schedule, not a fault. WARNING because a
         # student meeting this cap honestly is rare — the expected causes are a
@@ -1897,6 +1938,26 @@ def _open_records(
         )
         if (live_now or 0) >= settings.interview_max_sessions_per_user:
             raise _UserSessionCapReached(live_now)
+        # THE FLEET CEILING (see _FleetFull), last of the refusals: a student
+        # at their own limits should hear about those, which only they can fix.
+        # The lock is taken AFTER the per-student one on every path, so the two
+        # can never be acquired in opposite orders, and it is held only for the
+        # rest of this short transaction. Same freshness rule as the per-user
+        # count, so a killed task's rows stop occupying slots after three
+        # missed heartbeats rather than until the nightly sweep.
+        if settings.interview_max_concurrent > 0:
+            db.execute(select(func.pg_advisory_xact_lock(_FLEET_LOCK_KEY)))
+            live_fleet = db.scalar(
+                select(func.count())
+                .select_from(InterviewSession)
+                .where(
+                    InterviewSession.status == "running",
+                    InterviewSession.heartbeat_at
+                    >= now - timedelta(seconds=_LIVE_ELSEWHERE_GRACE_S),
+                )
+            )
+            if (live_fleet or 0) >= settings.interview_max_concurrent:
+                raise _FleetFull(live_fleet)
         conversation_id = convo.get_or_create(db, user_id, role).id
         row = InterviewSession(
             student_id=student_id,

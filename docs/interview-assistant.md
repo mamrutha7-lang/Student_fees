@@ -739,7 +739,7 @@ The client maps each of these to a sentence (`CLOSE_MESSAGES` in
 | 1006 | handshake refused or network dropped — no reason available |
 | 1008 | not signed in, not a STUDENT, or a STUDENT session with no `studentId` (`interview_sessions.student_id` is NOT NULL, and meeting that as a 1011 thirty seconds in with an upstream session already billed is worse) |
 | 1011 | internal error |
-| 1013 | per-worker concurrency cap — the server is full, everyone is affected |
+| 1013 | per-worker concurrency cap, or the fleet's `INTERVIEW_MAX_CONCURRENT` ceiling (the AWS quota for Nova 2 Sonic streams) — the server is full, everyone is affected |
 | 4001 | the engine is not configured — on `nova`, no resolvable AWS region |
 | 4002 | upstream 403/429/5xx/handshake failure, **or** `create_response: false` was not applied (refusing beats running a known-double interview). On `nova` it is also every way Bedrock can refuse the stream — credentials, IAM, an unsupported region, a throttle at the door — and the log line names which |
 | 4003 | Origin refused (a deployment mistake) |

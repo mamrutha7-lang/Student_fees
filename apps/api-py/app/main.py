@@ -7,6 +7,7 @@ Docs:       http://localhost:3300/docs
 """
 
 import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -19,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import retention
 from . import document_archive
+from . import interview_metrics
 from .config import settings
 from .db import SessionLocal
 from .observability import SERVICE_API, init_sentry
@@ -266,9 +268,27 @@ async def lifespan(_app: FastAPI):
             "that way until the next successful sweep. Serving anyway."
         )
 
+    # 3) The live-interview count autoscaling follows (app/interview_metrics.py).
+    # Only where the task definition named this task's family: on a laptop the
+    # line would be noise in a terminal, and in the test suite it would be one
+    # more background task per app instance.
+    metrics_task: asyncio.Task | None = None
+    if settings.interview_metrics_family.strip():
+        metrics_task = asyncio.create_task(
+            interview_metrics.publish_forever(
+                settings.interview_metrics_family.strip(),
+                lambda: interview._LIMITER.active,
+            ),
+            name="interview-metrics",
+        )
+
     try:
         yield
     finally:
+        if metrics_task is not None:
+            metrics_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await metrics_task
         # Ask live interviews to close with a real code and reason rather than
         # being torn down as a bare 1006.
         #

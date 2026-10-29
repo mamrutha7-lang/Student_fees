@@ -26,6 +26,17 @@ Entry format:
 
 ## Open
 
+- **2026-10-29 — The mock interview reaches its wrap-up in under a minute, and
+  no interview has produced a scorecard in 30 days.** The arc moves on five
+  accepted answers. On 2026-10-29 the HR (09:35 IST) and Business Analytics
+  (09:36 IST) interviews went from the opening to the wrap-up in about 50
+  seconds, and the Digital Marketing one (09:29 IST) counted 29 accepted
+  answers against at most 2 interviewer turns (`answers=29 turns=31/31` in its
+  `Interview ended` line). All 10 interviews that ended between 29 Sep and
+  29 Oct logged `report=-`. Likely the engine counts transcripts that are not
+  answers (speaker echo, or one answer split into several USER text blocks in
+  `_on_content_end`), but the logs cannot show which; the saved
+  `interview_turns` of the 09:29 session would.
 - **2026-10-23 — The job agent's "5 new postings a day per specialization"
   is 5 per run.** `job_scout.run` counts `created` for each stream inside one
   run, and nothing reads what earlier runs that day posted. With the one
@@ -68,6 +79,38 @@ Entry format:
   [REEP-API-3](https://bgs-college-of-engineering-and.sentry.io/issues/REEP-API-3):
   the address bounced on 2026-10-07 and Amazon SES now delivers nothing to it.
   No code fix needed; the office can lift the block on `/admin/mail`.
+
+## 2026-10-29 — A third mock interview at the same time would fail at AWS
+
+- **Symptom:** found while checking how many interviews can run at once,
+  before any student hit it. Only 2 interviews can run at the same time; a
+  third student pressing Start is refused by AWS after REEP has already
+  written their session row and counted the attempt.
+- **Cause:** Bedrock's "On-demand InvokeModel concurrent requests for Amazon
+  Nova 2 Sonic" quota is 2 on this account, in every region that offers the
+  model, and Service Quotas marks it not adjustable. Nothing in the api knew:
+  `_open_records` checked only per-student limits, and the per-task limiter
+  allowed 100.
+- **Evidence:** `ListServiceQuotas` (quota `L-995EBD81`, value 2, AWS default
+  20); `RequestServiceQuotaIncrease` answered "the specified quota is not
+  adjustable". Two interviews ran at once on 2026-10-29 at 09:35 IST.
+- **Fix:** `INTERVIEW_MAX_CONCURRENT` (`interviewMaxConcurrent: 2` in
+  `cdk.json`), checked in `_open_records` across the whole fleet and refused
+  with 1013 before anything is written. In the same change, the api scales on
+  live interviews per task (`app/interview_metrics.py`, the `interview-target`
+  policy) and each task refuses past 12. Minimum and maximum task counts are
+  unchanged.
+- **Where:** this PR; `app/routers/interview.py`, `app/interview_metrics.py`,
+  `app/config.py`, `app/main.py`, `infra/cdk/reep_core/stack.py`,
+  `infra/cdk/cdk.json`.
+- **Checked by:**
+  `tests/test_scale_guards.py::test_the_fleet_ceiling_refuses_a_different_student_before_writing`
+  (seen failing first), `tests/test_interview_metrics.py`, and the four new
+  synth tests in `infra/cdk/tests/test_core_synth.py`.
+- **Status:** open PR. The task-definition half needs a `reep-core` deploy.
+- **Left open:** raising the AWS quota is a Support case in the console, the
+  owner's to open; raise `interviewMaxConcurrent` in the same commit as the
+  new quota.
 
 ## 2026-10-23 — A company job could be closed while the company still listed it
 

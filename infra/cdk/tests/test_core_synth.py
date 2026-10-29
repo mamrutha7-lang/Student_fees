@@ -2422,6 +2422,81 @@ def test_the_api_pool_times_the_task_ceiling_fits_the_database(hardened: Templat
     assert (API_DB_POOL_SIZE + API_DB_MAX_OVERFLOW) * 10 <= 200
 
 
+def _api_envs(t: Template) -> list[dict[str, str]]:
+    return [
+        {e["Name"]: e["Value"] for e in c.get("Environment", [])}
+        for r in t.to_json()["Resources"].values()
+        if r["Type"] == "AWS::ECS::TaskDefinition"
+        for c in r["Properties"]["ContainerDefinitions"]
+        if any(e.get("Name") == "ENV" and e.get("Value") == "prod" for e in c.get("Environment", []))
+    ]
+
+
+def _interview_policies(t: Template) -> list[dict]:
+    return [
+        r["Properties"]
+        for r in t.to_json()["Resources"].values()
+        if r["Type"] == "AWS::ApplicationAutoScaling::ScalingPolicy"
+        and r["Properties"].get("PolicyName") == "interview-target"
+    ]
+
+
+def test_the_api_scales_on_the_interviews_it_publishes(hardened: Template) -> None:
+    """2026-10-29: the policy watches the metric the api writes, dimensioned by
+    the family the task definition tells it — a mismatch in any of the three
+    is a policy that never fires and never errors."""
+    from reep_core.stack import (
+        INTERVIEW_METRIC_DIMENSION,
+        INTERVIEW_METRIC_NAME,
+        INTERVIEW_METRIC_NAMESPACE,
+        INTERVIEWS_PER_TASK_MAX,
+        INTERVIEWS_PER_TASK_TARGET,
+    )
+
+    (policy,) = _interview_policies(hardened)
+    cfg = policy["TargetTrackingScalingPolicyConfiguration"]
+    spec = cfg["CustomizedMetricSpecification"]
+    assert spec["Namespace"] == INTERVIEW_METRIC_NAMESPACE
+    assert spec["MetricName"] == INTERVIEW_METRIC_NAME
+    assert spec["Statistic"] == "Average"
+    assert spec["Dimensions"] == [{"Name": INTERVIEW_METRIC_DIMENSION, "Value": "reep-api"}]
+    assert cfg["TargetValue"] == INTERVIEWS_PER_TASK_TARGET
+    assert INTERVIEWS_PER_TASK_TARGET < INTERVIEWS_PER_TASK_MAX, "scale out before a task starts refusing"
+
+    (env,) = _api_envs(hardened)
+    assert env["INTERVIEW_METRICS_FAMILY"] == "reep-api"
+    assert env["INTERVIEW_MAX_SESSIONS"] == str(INTERVIEWS_PER_TASK_MAX)
+
+
+def test_the_import_mirror_carries_no_interview_scaling(imported: Template) -> None:
+    """A new policy cannot be adopted by `cdk import`, and a new variable is a
+    task-definition revision the mirror must not register."""
+    assert not _interview_policies(imported)
+    for env in _api_envs(imported):
+        assert "INTERVIEW_METRICS_FAMILY" not in env
+        assert "INTERVIEW_MAX_SESSIONS" not in env
+
+
+def test_the_fleet_ceiling_is_the_bedrock_quota_and_reaches_the_task() -> None:
+    """cdk.json holds the account's Nova 2 Sonic concurrent-stream quota (2 on
+    2026-10-29, not adjustable in Service Quotas; raised only by an AWS Support
+    case). Raise this number in the same commit as the quota, never before."""
+    assert CDK_JSON_CONTEXT["interviewMaxConcurrent"] == 2
+    env = _api_envs(_core("harden", interviewMaxConcurrent=40))
+    assert env and all(e["INTERVIEW_MAX_CONCURRENT"] == "40" for e in env)
+    off = _api_envs(_core("harden", interviewMaxConcurrent=0))
+    assert off and all("INTERVIEW_MAX_CONCURRENT" not in e for e in off)
+
+
+def test_a_ceiling_the_tasks_could_never_carry_is_refused_at_synth() -> None:
+    from reep_core.stack import INTERVIEWS_PER_TASK_MAX
+
+    reachable = 10 * INTERVIEWS_PER_TASK_MAX
+    _core("harden", apiMaxTasks=10, interviewMaxConcurrent=reachable)
+    with pytest.raises(ValueError, match="interviewMaxConcurrent"):
+        _core("harden", apiMaxTasks=10, interviewMaxConcurrent=reachable + 1)
+
+
 def _edge_with_logs(phase: str = "harden", days: int | None = 30) -> dict:
     ctx: dict = {"phase": phase, "cloudfrontDistributionId": "E2TESTDIST"}
     if days is not None:
