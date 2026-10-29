@@ -124,26 +124,55 @@ _GOOD_ANSWER = "I led the campus fintech club and grew it to eighty members"
 
 
 async def interviewer_turn(session, cid: str = "a1", said: str = "Tell me about yourself.") -> None:
-    """One complete model turn: the completion opens, audio speaks, transcribes, completes."""
-    await session._on_upstream_event({"event": {"completionStart": {"completionId": f"c-{cid}"}}})
+    """One complete interviewer reply, as Nova 2 Sonic sends it mid-session.
+
+    Kept beside `spoken_reply` for the tests that read better with it; the two
+    are one sequence now, because Nova sends no completionStart per reply."""
     await spoken_reply(session, cid, said)
 
 
 async def exchange(session, index: int, transcript: str = _GOOD_ANSWER) -> None:
-    """One answered turn IN THE ORDER BEDROCK DOCUMENTS for a completion:
-    completionStart, then the ASR transcript of the student's answer (role
-    USER), then the interviewer's reply, then completionEnd. The transcript
-    that ticks the arc is delivered inside the completion it provoked -- which
-    is the whole reason a note decided on it cannot be sent when it arrives."""
-    await session._on_upstream_event({"event": {"completionStart": {"completionId": f"c{index}"}}})
+    """One answered turn IN THE ORDER NOVA 2 SONIC SENDS IT (measured
+    2026-10-29): the student's words as a USER block ending PARTIAL_TURN, then
+    the interviewer's reply. No completionStart and no completionEnd -- Nova
+    sends one completionStart for the whole session and none per turn."""
     await student_says(session, f"u{index}", transcript)
     await spoken_reply(session, f"a{index}")
 
 
-async def spoken_reply(session, cid: str, said: str = "Tell me about yourself.") -> None:
-    """The spoken half of a model turn: audio opens, speaks, transcribes, the
-    completion ends. Without the completionStart, so a test can put the
-    student's transcript between the two the way the service does."""
+async def reply_starts(session, cid: str, said: str = "Tell me about yourself.") -> None:
+    """The first block of a reply: the SPECULATIVE text, which is what Nova
+    sends first. It is the moment the student's answer is judged."""
+    await session._on_upstream_event(
+        {
+            "event": {
+                "contentStart": {
+                    "contentId": f"{cid}-plan",
+                    "type": "TEXT",
+                    "role": "ASSISTANT",
+                    "additionalModelFields": _SPECULATIVE,
+                }
+            }
+        }
+    )
+    await session._on_upstream_event(
+        {"event": {"textOutput": {"contentId": f"{cid}-plan", "content": said}}}
+    )
+    await session._on_upstream_event(
+        {
+            "event": {
+                "contentEnd": {
+                    "contentId": f"{cid}-plan",
+                    "type": "TEXT",
+                    "stopReason": "PARTIAL_TURN",
+                }
+            }
+        }
+    )
+
+
+async def reply_speaks(session, cid: str) -> None:
+    """The reply's audio block, ending END_TURN."""
     await session._on_upstream_event(
         {"event": {"contentStart": {"contentId": cid, "type": "AUDIO", "role": "ASSISTANT"}}}
     )
@@ -157,6 +186,14 @@ async def spoken_reply(session, cid: str, said: str = "Tell me about yourself.")
             }
         }
     )
+    await session._on_upstream_event(
+        {"event": {"contentEnd": {"contentId": cid, "type": "AUDIO", "stopReason": "END_TURN"}}}
+    )
+
+
+async def reply_ends(session, cid: str, said: str = "Tell me about yourself.") -> None:
+    """The reply's FINAL text, which Nova sends once the speech has played.
+    Its contentEnd is the end of the reply."""
     await session._on_upstream_event(
         {
             "event": {
@@ -173,13 +210,30 @@ async def spoken_reply(session, cid: str, said: str = "Tell me about yourself.")
         {"event": {"textOutput": {"contentId": f"{cid}-text", "content": said}}}
     )
     await session._on_upstream_event(
-        {"event": {"contentEnd": {"contentId": cid, "type": "AUDIO", "stopReason": "END_TURN"}}}
+        {
+            "event": {
+                "contentEnd": {
+                    "contentId": f"{cid}-text",
+                    "type": "TEXT",
+                    "stopReason": "END_TURN",
+                }
+            }
+        }
     )
-    await session._on_upstream_event({"event": {"completionEnd": {"stopReason": "END_TURN"}}})
+
+
+async def spoken_reply(session, cid: str, said: str = "Tell me about yourself.") -> None:
+    """One whole interviewer reply: SPECULATIVE text (PARTIAL_TURN), audio
+    (END_TURN), FINAL text (END_TURN) -- the three blocks, in that order, that
+    Nova 2 Sonic sent for every reply when it was measured."""
+    await reply_starts(session, cid, said)
+    await reply_speaks(session, cid)
+    await reply_ends(session, cid, said)
 
 
 async def student_says(session, cid: str, transcript: str) -> None:
-    """The model's ASR transcript of one student answer."""
+    """One USER transcript block. It ends PARTIAL_TURN, as Nova's do: a block
+    is not an answer, and the answer is judged when the reply starts."""
     await session._on_upstream_event(
         {
             "event": {
@@ -196,7 +250,7 @@ async def student_says(session, cid: str, transcript: str) -> None:
         {"event": {"textOutput": {"contentId": cid, "content": transcript}}}
     )
     await session._on_upstream_event(
-        {"event": {"contentEnd": {"contentId": cid, "type": "TEXT", "stopReason": "END_TURN"}}}
+        {"event": {"contentEnd": {"contentId": cid, "type": "TEXT", "stopReason": "PARTIAL_TURN"}}}
     )
 
 
@@ -343,23 +397,18 @@ class TestTheArc:
         assert "How this interview unfolds" not in generic._instructions()
 
     def test_a_beat_decided_on_the_transcript_never_goes_onto_the_reply_in_flight(self):
-        """THE ORDER BEDROCK DOCUMENTS, and the bug the first fix for this missed.
+        """THE ORDER NOVA 2 SONIC ACTUALLY SENDS, and the two bugs it explains.
 
-        One completion is: completionStart, the ASR transcript of the student's
-        answer (role USER), the speculative text, the audio, the final text,
-        completionEnd. The transcript that ticks the arc is therefore always
-        delivered INSIDE a completion the model is already composing. The
-        first fix for "it cuts itself off mid-sentence and changes the
-        question" held the note while `_response_open` was True -- and raised
-        that flag on the AUDIO block, which arrives AFTER the transcript. Its
-        test fed the audio block first, so it passed with the bug intact: on a
-        real stream the note went out onto the reply every time, Nova
-        abandoned the reply to answer it, and the interruption marker flushed
-        the browser's queue. Reported from real interviews twice.
+        Measured 2026-10-29: one completionStart for the whole session, no
+        completionEnd between replies, and each reply is SPECULATIVE text,
+        audio, then -- once the speech has played -- FINAL text. The student's
+        words arrive just before the reply, as USER blocks ending PARTIAL_TURN.
 
-        Two things are pinned here. completionStart is what opens the turn.
-        And a phase tick sends NOTHING, before or after the reply: a note on
-        the reply barges in on it, and a note after it is a second question.
+        The engine used to treat every USER block as a finished answer and
+        wait for a completionEnd that never came, so a beat decided on an
+        answer was held for the rest of the interview. Pinned here: a block is
+        not judged until the reply starts, the reply is open until its FINAL
+        text closes, and a phase tick sends NOTHING, before or after the reply.
         """
         session, upstream, browser = make_session("hr")
 
@@ -367,12 +416,13 @@ class TestTheArc:
             await interviewer_turn(session, "a1")
             before = len(upstream.notes)
 
-            await session._on_upstream_event(
-                {"event": {"completionStart": {"completionId": "c2"}}}
-            )
-            assert session._response_open is True, "completionStart opens the turn"
             await student_says(session, "u1", _GOOD_ANSWER)
+            # A block is not an answer: nothing is judged yet.
+            assert session._machine.phase is InterviewPhase.OPENING
+            assert session._holding() is True, "the reply to these words is about to start"
 
+            await reply_starts(session, "a2")
+            assert session._response_open is True, "the reply's first block opens it"
             # The arc moved, and the student's screen was told.
             assert session._machine.phase is InterviewPhase.PROBING
             assert browser.of_type("reep.phase")[-1]["phase"] == "probing"
@@ -383,7 +433,12 @@ class TestTheArc:
             )
             assert session._pending_notes == []
 
-            await spoken_reply(session, "a2")
+            await reply_speaks(session, "a2")
+            assert session._response_open is True, (
+                "the audio has been SENT, not played: the reply is open until "
+                "its FINAL text closes"
+            )
+            await reply_ends(session, "a2")
             assert session._response_open is False
             assert len(upstream.notes) == before, (
                 "a phase note after the reply is a second question on top of "
@@ -392,14 +447,255 @@ class TestTheArc:
 
         run(scenario())
 
+    def test_one_answer_in_several_blocks_is_one_answer(self):
+        """THE MISCOUNT OF 2026-10-29: 29 "accepted answers" in one interview.
+
+        Nova ends every USER block PARTIAL_TURN and splits one spoken answer
+        into several blocks. Judging each block as an answer moved the arc on
+        every one, so interviews went from the opening to the wrap-up in about
+        fifty seconds. The answer is everything the student said before the
+        interviewer's reply started.
+        """
+        session, _upstream, browser = make_session("hr")
+
+        async def scenario():
+            await interviewer_turn(session, "a0", "Tell me about yourself.")
+            await student_says(session, "u1", "I am a final-year commerce student")
+            await student_says(session, "u2", "and I led the campus fintech club")
+            await student_says(session, "u3", "for two years, growing it to eighty members")
+            await spoken_reply(session, "a1")
+
+        run(scenario())
+        students = [t for t in session.emitted if t[0] == nova._SENDER_STUDENT]
+        assert len(students) == 1
+        assert students[0][1] == (
+            "I am a final-year commerce student and I led the campus fintech "
+            "club for two years, growing it to eighty members"
+        )
+        assert session._answers_accepted == 1
+        assert session._machine.answers == 1
+        assert session._machine.phase is InterviewPhase.PROBING
+        transcripts = browser.of_type("conversation.item.input_audio_transcription.completed")
+        assert len(transcripts) == 1
+        assert transcripts[0]["item_id"] == "u1"
+
+    def test_every_reply_is_recorded_without_a_completion_end(self):
+        """The other half of the same incident: `answers=29 turns=31/31` was 29
+        student turns and TWO interviewer turns, because the interviewer's turn
+        was recorded on completionEnd, which Nova 2 Sonic does not send per
+        reply. Each reply's FINAL text is what closes and records it now."""
+        session, _upstream, browser = make_session("hr")
+
+        async def scenario():
+            await session._on_upstream_event(
+                {"event": {"completionStart": {"completionId": "only-one"}}}
+            )
+            await spoken_reply(session, "a0", "Welcome. Tell me about yourself.")
+            for index in range(1, 4):
+                await exchange(session, index)
+
+        run(scenario())
+        interviewer = [t for t in session.emitted if t[0] == nova._SENDER_INTERVIEWER]
+        students = [t for t in session.emitted if t[0] == nova._SENDER_STUDENT]
+        assert len(interviewer) == 4
+        assert len(students) == 3
+        assert interviewer[0][1] == "Welcome. Tell me about yourself."
+        assert len(browser.of_type("response.created")) == 4
+        assert len(browser.of_type("response.done")) == 4
+        # What echo detection compares against is set on every reply too.
+        assert session._last_interviewer_text == "Tell me about yourself."
+
+    def test_the_browser_hears_of_the_wrap_up_with_the_verdict(self):
+        """The client reads every `response.done` in wrap_up as "the interview
+        is over and the report is being written" and stops inviting speech.
+        Announced at the fifth answer, that would fire on the invitation itself
+        and tell the student to say nothing at the one moment they are asked
+        to speak. So WRAP_UP reaches the browser as the verdict note goes."""
+        session, _upstream, browser = make_session("hr")
+
+        def phases() -> list[str]:
+            return [c["phase"] for c in browser.of_type("reep.phase")]
+
+        async def scenario():
+            for index in range(5):
+                await exchange(session, index)
+            assert "wrap_up" not in phases()
+            # The invitation's own reply: still not the wrap-up for the browser.
+            await interviewer_turn(session, "invite", "Do you have any questions for us?")
+            assert "wrap_up" not in phases()
+            await exchange(session, 99, "No, thank you.")
+            assert phases()[-1] == "wrap_up"
+            assert phases().count("wrap_up") == 1
+
+        run(scenario())
+
+    def test_a_note_held_behind_words_nova_never_answered_still_goes(self, monkeypatch):
+        """Words with no reply (a "thanks" Nova lets pass) must not hold the
+        verdict for the rest of the session: once they are stale, the watchdog's
+        next beat sends what was held."""
+        session, upstream, _browser = make_session("hr")
+        clock = [1000.0]
+        monkeypatch.setattr(nova.time, "monotonic", lambda: clock[0])
+
+        async def scenario():
+            await interviewer_turn(session, "a1")
+            await student_says(session, "u1", "thanks")
+            session._pending_notes.append(nova.turn_directive("verdict"))
+            await session._take_next_beat()
+            assert session._pending_notes, "the reply to these words may still start"
+            clock[0] += nova._STUDENT_REPLY_WAIT_S + 0.1
+            await session._take_next_beat()
+            assert session._pending_notes == []
+            assert any("closing verdict" in note for note in upstream.notes)
+
+        run(scenario())
+
+    def test_a_reply_whose_final_text_never_comes_is_closed_after_it_has_played(
+        self, monkeypatch
+    ):
+        """The FINAL text is what releases a held beat. A reply that never sends
+        one is closed once its audio has had time to play, plus a grace."""
+        session, upstream, _browser = make_session("hr")
+        clock = [1000.0]
+        monkeypatch.setattr(nova.time, "monotonic", lambda: clock[0])
+
+        async def scenario():
+            await student_says(session, "u1", "hmm")
+            await reply_starts(session, "a1")
+            await reply_speaks(session, "a1")  # 64 bytes of 24 kHz audio: ~1 ms
+            session._pending_notes.append(nova.turn_directive("resume"))
+            deadline = session._final_deadline
+            assert deadline == pytest.approx(1000.0 + nova._FINAL_TEXT_GRACE_S, abs=0.01)
+
+            clock[0] = deadline - 0.5
+            await session._check_turn_deadlines(clock[0])
+            assert session._response_open is True, "still inside the grace"
+            assert session._pending_notes
+
+            clock[0] = deadline + 0.1
+            await session._check_turn_deadlines(clock[0])
+            assert session._response_open is False
+            assert session._pending_notes == []
+            assert any("finish the question you were asking" in note for note in upstream.notes)
+
+        run(scenario())
+        interviewer = [t for t in session.emitted if t[0] == nova._SENDER_INTERVIEWER]
+        assert len(interviewer) == 1, "recorded, without the FINAL text it never got"
+
+    def test_a_new_reply_closes_one_that_never_sent_its_final_text(self):
+        """If the next reply starts first, the open one is recorded as it is and
+        the held notes stay held: the new reply is in flight."""
+        session, upstream, _browser = make_session("hr")
+
+        async def scenario():
+            await reply_starts(session, "a1", "First question?")
+            await reply_speaks(session, "a1")
+            session._pending_notes.append(nova.turn_directive("resume"))
+            await student_says(session, "u1", _GOOD_ANSWER)
+            await reply_starts(session, "a2", "Second question?")
+            assert session._response_open is True
+            assert len(session._pending_notes) == 1
+            await reply_speaks(session, "a2")
+            await reply_ends(session, "a2", "Second question?")
+            assert session._pending_notes == []
+
+        run(scenario())
+        interviewer = [t for t in session.emitted if t[0] == nova._SENDER_INTERVIEWER]
+        assert len(interviewer) == 2
+        assert last_student_turn(session)[3] == "accepted"
+
+    def test_a_reply_that_starts_late_still_holds_the_beat_it_provokes(self, monkeypatch):
+        """The beat decided on an answer waits for the reply to that answer
+        even when Nova took longer than `_STUDENT_REPLY_WAIT_S` to start it:
+        sent then, it would land on the reply that is starting."""
+        session, upstream, _browser = make_session("hr")
+        clock = [1000.0]
+        monkeypatch.setattr(nova.time, "monotonic", lambda: clock[0])
+        session._awaiting_candidate_questions = True
+
+        async def scenario():
+            await student_says(session, "u1", "No questions, thank you.")
+            clock[0] += nova._STUDENT_REPLY_WAIT_S + 3
+            before = len(upstream.notes)
+            await reply_starts(session, "a1")
+            assert session._verdict_requested is True
+            assert len(upstream.notes) == before
+            assert len(session._pending_notes) == 1
+
+        run(scenario())
+
+    def test_the_interruption_marker_does_not_start_a_reply(self):
+        """The marker arrives as assistant text. Taken for the start of a new
+        reply, it would judge the student's barge-in before Nova had heard it
+        all, and leave the real reply judged one exchange late."""
+        session, _upstream, browser = make_session("hr")
+
+        async def scenario():
+            await reply_starts(session, "a1")
+            await reply_speaks(session, "a1")
+            await reply_ends(session, "a1")
+            await session._on_upstream_event(
+                {
+                    "event": {
+                        "contentStart": {
+                            "contentId": "m1",
+                            "type": "TEXT",
+                            "role": "ASSISTANT",
+                            "additionalModelFields": _SPECULATIVE,
+                        }
+                    }
+                }
+            )
+            await session._on_upstream_event(
+                {"event": {"textOutput": {"contentId": "m1", "content": '{ "interrupted" : true }'}}}
+            )
+            assert session._response_open is False
+            assert len(browser.of_type("response.created")) == 1
+
+        run(scenario())
+
+    def test_a_reply_whose_audio_never_ends_is_still_closed(self, monkeypatch):
+        """No stop reason on the audio and no FINAL text: once the speech has
+        had time to play, and two graces have passed, the reply is over."""
+        session, _upstream, _browser = make_session("hr")
+        clock = [1000.0]
+        monkeypatch.setattr(nova.time, "monotonic", lambda: clock[0])
+
+        async def scenario():
+            await reply_starts(session, "a1")
+            await session._on_upstream_event(
+                {"event": {"contentStart": {"contentId": "a1", "type": "AUDIO", "role": "ASSISTANT"}}}
+            )
+            await session._on_upstream_event(
+                {
+                    "event": {
+                        "audioOutput": {
+                            "contentId": "a1",
+                            # one second of 24 kHz, 16-bit mono
+                            "content": base64.b64encode(b"\x01\x00" * 24_000).decode("ascii"),
+                        }
+                    }
+                }
+            )
+            clock[0] = 1000.0 + 1 + 2 * nova._FINAL_TEXT_GRACE_S - 0.5
+            await session._check_turn_deadlines(clock[0])
+            assert session._response_open is True
+            clock[0] = 1000.0 + 1 + 2 * nova._FINAL_TEXT_GRACE_S + 0.1
+            await session._check_turn_deadlines(clock[0])
+            assert session._response_open is False
+
+        run(scenario())
+
     def test_the_invitation_is_held_until_the_reply_in_flight_has_finished(self):
         """The stop beats still travel as notes, and a note waits for the gap.
 
-        The fifth accepted answer arrives inside the completion in which the
-        model is already asking its own next question. The invitation must not
-        land on that reply (barge-in) and must land straight after it, telling
-        the model to set that question aside. The arc is NOT delayed with it:
-        the phase ticks and is announced on the answer, exactly as before.
+        The fifth accepted answer is judged as the model starts its own next
+        reply. The invitation must not land on that reply (barge-in), not when
+        its audio has merely been SENT (it is still playing), and must land as
+        its FINAL text closes, telling the model to set aside any question it
+        just asked. The arc ticks on the answer; the browser is told WRAP_UP
+        with the verdict, so the invitation is not read as "writing your
+        report".
         """
         session, upstream, browser = make_session("hr")
 
@@ -409,18 +705,19 @@ class TestTheArc:
             assert session._machine.phase is InterviewPhase.DEEP_DIVE
             before = len(upstream.notes)
 
-            await session._on_upstream_event(
-                {"event": {"completionStart": {"completionId": "c5"}}}
-            )
             await student_says(session, "u4", _GOOD_ANSWER)
+            await reply_starts(session, "a5")
             assert session._machine.phase is InterviewPhase.WRAP_UP
-            assert browser.of_type("reep.phase")[-1]["phase"] == "wrap_up"
+            assert browser.of_type("reep.phase")[-1]["phase"] == "deep_dive"
             assert session._awaiting_candidate_questions is True
             assert len(upstream.notes) == before
             assert len(session._pending_notes) == 1
             assert "any questions for you" in session._pending_notes[0]
 
-            await spoken_reply(session, "a5")
+            await reply_speaks(session, "a5")
+            assert len(upstream.notes) == before, "the audio is still playing"
+
+            await reply_ends(session, "a5")
             assert session._pending_notes == []
             sent = upstream.notes[before:]
             assert any("any questions for you" in note for note in sent)
@@ -436,49 +733,27 @@ class TestTheArc:
     def test_a_held_verdict_does_not_let_the_scorecard_be_asked_for_early(self):
         """The drain runs BEFORE the report check, and suppresses it for that beat.
 
-        The scorecard is requested when a turn completes and the verdict has
-        been asked for. If the verdict note is released on that same completion,
-        the next turn IS the verdict -- so requesting the report there asks for
-        it before the student has heard a word of it, which is the "one turn
-        early" mistake `_on_completion_end` exists to prevent.
+        The verdict note goes when the reply it was decided under finishes, so
+        the NEXT reply is the verdict. Asking for the scorecard when the note
+        goes would ask for it before the student has heard a word of the
+        verdict. It is asked for when the verdict's own reply has finished.
         """
-        session, upstream, _browser = make_session("hr")
+        session, upstream, browser = make_session("hr")
         session._awaiting_candidate_questions = True
 
         async def scenario():
-            await session._on_upstream_event(
-                {
-                    "event": {
-                        "contentStart": {
-                            "contentId": "a9",
-                            "type": "AUDIO",
-                            "role": "ASSISTANT",
-                        }
-                    }
-                }
-            )
             await student_says(session, "u9", "No questions, thank you.")
+            await reply_starts(session, "a9")
             assert session._verdict_requested is True
             assert len(session._pending_notes) == 1
 
-            await session._on_upstream_event(
-                {
-                    "event": {
-                        "contentEnd": {
-                            "contentId": "a9",
-                            "type": "AUDIO",
-                            "stopReason": "END_TURN",
-                        }
-                    }
-                }
-            )
-            await session._on_upstream_event(
-                {"event": {"completionEnd": {"stopReason": "END_TURN"}}}
-            )
+            await reply_speaks(session, "a9")
+            await reply_ends(session, "a9")
             # The verdict went; the scorecard was NOT asked for on the same beat.
+            assert any("closing verdict" in note for note in upstream.notes)
             assert session._report_requested is False
 
-            # The verdict is spoken, and its completion is what asks for it.
+            # The verdict is spoken, and its end is what asks for the scorecard.
             await interviewer_turn(session, "a10", said="Overall, a solid round.")
             assert session._report_requested is True
 
@@ -487,10 +762,8 @@ class TestTheArc:
     def test_a_transcript_split_across_events_is_still_one_answer(self):
         """The arc must not race to the wrap-up because ASR arrived in pieces.
 
-        Nova delivers the transcription as one content BLOCK, but nothing says
-        it must arrive as one `textOutput`. Counting each event as a finished
-        answer would spend a five-answer interview in two turns, and the
-        student would be given a verdict on an interview they never had.
+        One block can also arrive as several `textOutput` events. Joined, and
+        judged once, with the blocks around it.
         """
         session, _upstream, _browser = make_session("hr")
 
@@ -514,8 +787,9 @@ class TestTheArc:
                 {"event": {"textOutput": {"contentId": "u1", "content": " fintech club for two years"}}}
             )
             await session._on_upstream_event(
-                {"event": {"contentEnd": {"contentId": "u1", "type": "TEXT", "stopReason": "END_TURN"}}}
+                {"event": {"contentEnd": {"contentId": "u1", "type": "TEXT", "stopReason": "PARTIAL_TURN"}}}
             )
+            await reply_starts(session, "a1")
 
         run(scenario())
         assert session._answers_accepted == 1
@@ -530,12 +804,12 @@ class TestTheArc:
         session, upstream, browser = make_session("hr")
         before = len(upstream.notes)
 
-        run(student_says(session, "u1", "um, yeah"))
+        run(exchange(session, 1, "um, yeah"))
 
         assert session._machine.phase is InterviewPhase.OPENING
         assert len(upstream.notes) == before
-        assert session.emitted[-1][3] == "filler"
-        assert session.emitted[-1][4] is False
+        assert last_student_turn(session)[3] == "filler"
+        assert last_student_turn(session)[4] is False
 
     def test_a_short_answer_is_recorded_but_not_clarified(self):
         """The documented difference from the relay, pinned so it stays deliberate.
@@ -546,9 +820,9 @@ class TestTheArc:
         """
         session, upstream, _browser = make_session("hr")
 
-        run(student_says(session, "u1", "yes it was"))
+        run(exchange(session, 1, "yes it was"))
 
-        assert session.emitted[-1][3] == "too_short"
+        assert last_student_turn(session)[3] == "too_short"
         assert not any("too brief" in note for note in upstream.notes)
 
     def test_the_fifth_answer_invites_questions_before_the_verdict(self):
@@ -561,7 +835,7 @@ class TestTheArc:
 
         async def scenario():
             for index in range(5):
-                await student_says(session, f"u{index}", _GOOD_ANSWER)
+                await exchange(session, index)
 
         run(scenario())
         assert session._machine.phase is InterviewPhase.WRAP_UP
@@ -579,8 +853,8 @@ class TestTheArc:
 
         async def scenario():
             for index in range(5):
-                await student_says(session, f"u{index}", _GOOD_ANSWER)
-            await student_says(session, "u-final", "no thanks")
+                await exchange(session, index)
+            await exchange(session, 99, "no thanks")
 
         run(scenario())
         assert session._verdict_requested is True
@@ -589,15 +863,16 @@ class TestTheArc:
     def test_the_scorecard_is_requested_after_the_verdict_is_spoken(self):
         """Not when it is asked for. The student would hear the model talk over itself.
 
-        The request rides on completionEnd — the model has stopped speaking —
-        which is also what makes the client's "Writing your report…" honest.
+        The request rides on the end of the verdict's reply -- the model has
+        stopped speaking -- which is also what makes the client's "Writing
+        your report…" honest.
         """
         session, upstream, _browser = make_session("hr")
 
         async def scenario():
             for index in range(5):
-                await student_says(session, f"u{index}", _GOOD_ANSWER)
-            await student_says(session, "u-final", "no thanks")
+                await exchange(session, index)
+            await exchange(session, 99, "no thanks")
             assert session._report_requested is False
             await interviewer_turn(session, "verdict", "You did well. Good luck.")
 
@@ -615,12 +890,11 @@ class TestTheArc:
 
         async def scenario():
             for index in range(6):
-                await student_says(session, f"u{index}", _GOOD_ANSWER)
+                await exchange(session, index)
 
         run(scenario())
         assert session._machine.phase is InterviewPhase.OPENING
         assert session._report_requested is False
-
 
 # ---------------------------------------------------------------------------
 # The scorecard
@@ -805,13 +1079,26 @@ class TestTheDownstreamContract:
 
     def test_the_student_s_transcript_lands_on_the_name_the_client_reads(self):
         session, _upstream, browser = make_session("hr")
-        run(student_says(session, "u1", _GOOD_ANSWER))
+
+        async def scenario():
+            await student_says(session, "u1", _GOOD_ANSWER)
+            assert not browser.of_type(
+                "conversation.item.input_audio_transcription.completed"
+            ), "a block is not an answer; the line is drawn when it is judged"
+            await reply_starts(session, "a1")
+
+        run(scenario())
         completed = browser.of_type(
             "conversation.item.input_audio_transcription.completed"
         )[0]
         assert completed["transcript"] == _GOOD_ANSWER
         assert completed["item_id"] == "u1"
         assert browser.of_type("input_audio_buffer.speech_stopped")
+        # The student's line reaches the browser before the reply it provoked.
+        kinds = [c["type"] for c in browser.control]
+        assert kinds.index("conversation.item.input_audio_transcription.completed") < kinds.index(
+            "response.created"
+        )
 
     def test_a_barge_in_flushes_the_player_and_is_not_a_transcript(self):
         """Nova's interruption marker is a textOutput, not an event of its own.
@@ -1297,8 +1584,10 @@ class TestEngineSelection:
 
 
 async def interrupted(session, cid: str = "i1") -> None:
-    """Nova's barge-in marker, inside the turn being interrupted, and the end
-    of that turn: the audio block stops INTERRUPTED and the completion ends."""
+    """Nova's barge-in marker inside the reply being interrupted, its audio
+    block stopping INTERRUPTED, and the FINAL text of what was actually
+    spoken closing the reply. No completionEnd: Nova 2 Sonic sends none per
+    reply."""
     await session._on_upstream_event(
         {
             "event": {
@@ -1317,7 +1606,17 @@ async def interrupted(session, cid: str = "i1") -> None:
     await session._on_upstream_event(
         {"event": {"contentEnd": {"contentId": cid, "type": "AUDIO", "stopReason": "INTERRUPTED"}}}
     )
-    await session._on_upstream_event({"event": {"completionEnd": {"stopReason": "INTERRUPTED"}}})
+    await session._on_upstream_event(
+        {
+            "event": {
+                "contentEnd": {
+                    "contentId": f"{cid}-marker",
+                    "type": "TEXT",
+                    "stopReason": "INTERRUPTED",
+                }
+            }
+        }
+    )
 
 
 def last_student_turn(session) -> tuple[str, str, str, str | None, bool]:
@@ -1342,26 +1641,28 @@ class TestAnInterruptionThatWasNotAnAnswer:
 
         async def scenario():
             # The interviewer is mid-question; the student's chair scrapes.
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c1"}}})
+            await reply_starts(session, "a1")
             await session._on_upstream_event(
                 {"event": {"contentStart": {"contentId": "a1", "type": "AUDIO", "role": "ASSISTANT"}}}
             )
             await interrupted(session, "a1")
             assert browser.of_type("reep.audio.flush"), "the browser's queue is flushed on the marker"
+            assert session._response_open is False, "the interrupted reply is over"
             before = len(upstream.notes)
 
-            # Nova replies to the noise: the transcript lands inside that reply.
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c2"}}})
+            # Nova replies to the noise; the noise is judged as that reply starts.
             await student_says(session, "u1", "hmm")
-            assert session.emitted[-1][3] == "filler"
-            assert session.emitted[-1][4] is False
+            await reply_starts(session, "a2", "Sorry, I didn't catch that.")
+            assert last_student_turn(session)[3] == "filler"
+            assert last_student_turn(session)[4] is False
             assert session._machine.phase is InterviewPhase.OPENING
             # Held, not sent: a note now would barge in on the reply in flight.
             assert len(upstream.notes) == before
             assert len(session._pending_notes) == 1
             assert "finish the question you were asking" in session._pending_notes[0]
 
-            await spoken_reply(session, "a2", "Sorry, I didn't catch that.")
+            await reply_speaks(session, "a2")
+            await reply_ends(session, "a2", "Sorry, I didn't catch that.")
             sent = upstream.notes[before:]
             assert any("finish the question you were asking" in note for note in sent), (
                 "the resume directive must go upstream once the reply has finished"
@@ -1375,15 +1676,13 @@ class TestAnInterruptionThatWasNotAnAnswer:
         session, upstream, _browser = make_session("hr")
 
         async def scenario():
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c1"}}})
+            await reply_starts(session, "a1")
             await session._on_upstream_event(
                 {"event": {"contentStart": {"contentId": "a1", "type": "AUDIO", "role": "ASSISTANT"}}}
             )
             await interrupted(session, "a1")
             before = len(upstream.notes)
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c2"}}})
-            await student_says(session, "u1", _GOOD_ANSWER)
-            await spoken_reply(session, "a2")
+            await exchange(session, 1)
             assert last_student_turn(session)[3] == "accepted"
             assert session._machine.phase is InterviewPhase.PROBING
             assert len(upstream.notes) == before
@@ -1424,7 +1723,11 @@ class TestAnInterruptionThatWasNotAnAnswer:
         it as the student and, long enough for the word gate, it would advance
         the arc on an answer nobody gave -- and the model would answer its own
         question. It is recorded as `echo`, counts for nothing, and the model is
-        asked to put the question again."""
+        asked to put the question again.
+
+        Until 2026-10-29 this could not work in production: the sentence it is
+        compared against was set when a reply closed, and replies only closed
+        on a completionEnd Nova 2 Sonic never sends mid-session."""
         session, upstream, _browser = make_session("hr")
         question = "Tell me about a time you led a team through a difficult change at work."
 
@@ -1432,13 +1735,14 @@ class TestAnInterruptionThatWasNotAnAnswer:
             await interviewer_turn(session, "a1", question)
             assert session._last_interviewer_text == question
             before = len(upstream.notes)
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c2"}}})
             await student_says(session, "u1", "about a time you led a team through a difficult change at work")
-            assert session.emitted[-1][3] == "echo"
-            assert session.emitted[-1][4] is False
+            await reply_starts(session, "a2")
+            assert last_student_turn(session)[3] == "echo"
+            assert last_student_turn(session)[4] is False
             assert session._machine.phase is InterviewPhase.OPENING
             assert len(session._pending_notes) == 1
-            await spoken_reply(session, "a2")
+            await reply_speaks(session, "a2")
+            await reply_ends(session, "a2")
             assert any("finish the question you were asking" in note for note in upstream.notes[before:])
 
         run(scenario())
@@ -1447,27 +1751,31 @@ class TestAnInterruptionThatWasNotAnAnswer:
         """Nova can end the audio block INTERRUPTED without the text marker.
         It is the same barge-in: the browser is told to flush and the
         transcript that follows is judged as the thing that interrupted, so a
-        cough gets the question back rather than losing it."""
+        cough gets the question back rather than losing it. With no FINAL text
+        either, the cut reply is closed when the next one starts."""
         session, _upstream, browser = make_session("hr")
 
         async def scenario():
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c1"}}})
+            await reply_starts(session, "a1")
             await session._on_upstream_event(
                 {"event": {"contentStart": {"contentId": "a1", "type": "AUDIO", "role": "ASSISTANT"}}}
             )
             await session._on_upstream_event(
                 {"event": {"contentEnd": {"contentId": "a1", "type": "AUDIO", "stopReason": "INTERRUPTED"}}}
             )
-            await session._on_upstream_event({"event": {"completionEnd": {"stopReason": "INTERRUPTED"}}})
             assert len(browser.of_type("reep.audio.flush")) == 1
             assert session._interruptions == 1
 
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c2"}}})
             await student_says(session, "u1", "hmm")
+            await reply_starts(session, "a2")
             assert len(session._pending_notes) == 1
             assert "finish the question you were asking" in session._pending_notes[0]
 
         run(scenario())
+        assert len(browser.of_type("response.done")) == 1, (
+            "the cut reply was closed when the next one began"
+        )
+        assert session._response_open is True, "and the next one is in flight"
 
     def test_the_marker_and_the_stop_reason_are_one_interruption(self):
         session, _upstream, browser = make_session("hr")
@@ -1521,28 +1829,15 @@ class TestAnInterruptionThatWasNotAnAnswer:
             await exchange(session, 1)  # an accepted answer: the arc moves to PROBING
             phase = session._machine.phase
 
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c2"}}})
-            await session._on_upstream_event(
-                {
-                    "event": {
-                        "contentStart": {
-                            "contentId": "s2",
-                            "type": "TEXT",
-                            "role": "ASSISTANT",
-                            "additionalModelFields": _SPECULATIVE,
-                        }
-                    }
-                }
-            )
-            await session._on_upstream_event({"event": {"textOutput": {"contentId": "s2", "content": cut}}})
+            await reply_starts(session, "a2", cut)
             await session._on_upstream_event(
                 {"event": {"contentStart": {"contentId": "a2", "type": "AUDIO", "role": "ASSISTANT"}}}
             )
             await interrupted(session, "a2")
             assert session._last_interviewer_text == cut
 
-            await session._on_upstream_event({"event": {"completionStart": {"completionId": "c3"}}})
             await student_says(session, "u2", "how you would evaluate a new market before a product launch")
+            await reply_starts(session, "a3")
             assert last_student_turn(session)[3] == "echo"
             assert last_student_turn(session)[4] is False
             assert session._machine.phase is phase, "an echo must not advance the arc"
@@ -1621,17 +1916,40 @@ class TestAnInterruptionThatWasNotAnAnswer:
 
         async def scenario():
             for index in range(5):
-                await student_says(session, f"u{index}", _GOOD_ANSWER)
-            await student_says(session, "u-final", "no thanks")
+                await exchange(session, index)
+            await exchange(session, 99, "no thanks")
             await interviewer_turn(session, "v1", "Two strengths, one improvement, one drill. Thank you.")
             assert session._report_requested is True
             before = len(upstream.notes)
             session._interrupted_at = nova.time.monotonic()
             await student_says(session, "u-late", "thank you")
+            await reply_starts(session, "late")
             assert session._pending_notes == []
             assert len(upstream.notes) == before
 
         run(scenario())
+
+    def test_words_no_reply_followed_are_saved_when_the_session_closes(self):
+        """The "thank you" after the verdict, or an answer the socket cut,
+        never meets a reply to be judged at. It is still the student's turn,
+        and a record that drops it is short by one turn with no reason."""
+        session, upstream, _browser = make_session("hr")
+
+        async def scenario():
+            await interviewer_turn(session, "a1")
+            await student_says(session, "u1", "thank you so much")
+
+        run(scenario())
+        before = len(session.emitted)
+        notes = len(upstream.notes)
+        session._record_unanswered_words()
+        assert len(session.emitted) == before + 1
+        assert session.emitted[-1][0] == nova._SENDER_STUDENT
+        assert session.emitted[-1][1] == "thank you so much"
+        assert session.emitted[-1][4] is False, "nothing advances on words at the close"
+        assert len(upstream.notes) == notes
+        session._record_unanswered_words()
+        assert len(session.emitted) == before + 1, "saved once"
 
     def test_the_model_is_briefed_on_interruptions_and_skips_for_every_interview(self):
         """Nova decides WHEN the student has stopped; what it does with a turn

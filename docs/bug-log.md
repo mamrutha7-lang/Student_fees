@@ -26,17 +26,6 @@ Entry format:
 
 ## Open
 
-- **2026-10-29 — The mock interview reaches its wrap-up in under a minute, and
-  no interview has produced a scorecard in 30 days.** The arc moves on five
-  accepted answers. On 2026-10-29 the HR (09:35 IST) and Business Analytics
-  (09:36 IST) interviews went from the opening to the wrap-up in about 50
-  seconds, and the Digital Marketing one (09:29 IST) counted 29 accepted
-  answers against at most 2 interviewer turns (`answers=29 turns=31/31` in its
-  `Interview ended` line). All 10 interviews that ended between 29 Sep and
-  29 Oct logged `report=-`. Likely the engine counts transcripts that are not
-  answers (speaker echo, or one answer split into several USER text blocks in
-  `_on_content_end`), but the logs cannot show which; the saved
-  `interview_turns` of the 09:29 session would.
 - **2026-10-23 — The job agent's "5 new postings a day per specialization"
   is 5 per run.** `job_scout.run` counts `created` for each stream inside one
   run, and nothing reads what earlier runs that day posted. With the one
@@ -79,6 +68,57 @@ Entry format:
   [REEP-API-3](https://bgs-college-of-engineering-and.sentry.io/issues/REEP-API-3):
   the address bounced on 2026-10-07 and Amazon SES now delivers nothing to it.
   No code fix needed; the office can lift the block on `/admin/mail`.
+
+## 2026-10-29 — The mock interview reached its wrap-up in under a minute and never gave a scorecard
+
+- **Symptom:** students' mock interviews moved from the opening to the wrap-up
+  in about 50 seconds (HR at 09:35 IST and Business Analytics at 09:36 IST on
+  2026-10-29), the "any questions for us?" beat and the verdict never came,
+  and no interview produced a scorecard in 30 days.
+- **Cause:** `app/interview_nova.py` read Nova 2 Sonic's stream the way the
+  documentation suggests and not the way it is sent. Two things were wrong.
+  (1) Every USER transcript block was judged as a whole answer, and Nova ends
+  every block `PARTIAL_TURN` and splits one spoken answer into several, so one
+  answer counted as several and the arc ran out. (2) A reply was treated as
+  over only on `completionEnd`, which Nova 2 Sonic sends once per session and
+  never between replies. So no interviewer turn was recorded, the sentence
+  echo detection compares against was never set (speaker echo counted as
+  answers too), the held invitation and verdict were never sent, and the
+  scorecard, requested only after the verdict, was never asked for.
+- **Evidence:** the Digital Marketing interview at 09:29 IST logged
+  `answers=29 turns=31/31`: 29 student turns and 2 interviewer turns. All 10
+  interviews that ended between 29 Sep and 29 Oct logged `report=-`. A probe
+  run inside the account on 2026-10-29 against `amazon.nova-2-sonic-v1:0`
+  with the api's own task role recorded the real event order: one
+  `completionStart` for the session, no `completionEnd` between replies, and
+  per reply SPECULATIVE text (`PARTIAL_TURN`), audio (`END_TURN`), then FINAL
+  text (`END_TURN`) about as long after as the speech takes to play.
+- **Fix:** an answer is everything the student said before the interviewer's
+  reply to it starts, and is judged at that moment (`_finish_student_turn`).
+  A reply ends when its FINAL text closes (`_on_reply_finished`), which
+  records it, sends what was held and, after the verdict, asks for the
+  scorecard. Two fallbacks keep a missing event from holding a beat for
+  ever: a reply whose FINAL text never comes is closed once its audio has
+  had time to play plus 4 s, or when the next reply starts; words no reply
+  follows stop holding notes after 5 s and are saved when the session
+  closes. The browser is now told WRAP_UP when the verdict goes up, not at
+  the fifth answer, because the client reads every `response.done` in
+  wrap_up as "writing your report" and that would have fired on the
+  invitation itself. No client change.
+- **Where:** [PR #236](https://github.com/darshani8/reep-/pull/236);
+  `app/interview_nova.py`, `tests/test_interview_nova.py`,
+  `tests/test_interview_simulation.py`.
+- **Checked by:** `test_one_answer_in_several_blocks_is_one_answer`,
+  `test_every_reply_is_recorded_without_a_completion_end`,
+  `test_the_browser_hears_of_the_wrap_up_with_the_verdict` and the
+  full-interview simulation for all four tracks, each seen failing on the
+  code before the fix; the existing engine tests now feed the real order.
+- **Status:** open PR. Needs an api deploy.
+- **Left open:** interruptions were not in the probe, so where Nova puts the
+  interruption marker and whether it sends a FINAL text for a cut reply is
+  still read from the old documentation; both fallbacks above cover a cut
+  reply either way. Check the first real interviews after the deploy:
+  `answers=` should be at most a handful and `report=ok`.
 
 ## 2026-10-29 — A third mock interview at the same time would fail at AWS
 
