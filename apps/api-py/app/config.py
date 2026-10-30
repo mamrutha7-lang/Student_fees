@@ -571,6 +571,27 @@ class Settings(BaseSettings):
     # else is answered 1013. 2 (not 1) so a student whose laptop slept mid-answer
     # can start again without waiting for the dead socket's watchdog to notice.
     interview_max_sessions_per_user: int = 2
+    # THE FLEET'S CEILING, AND THE ONE THAT IS A BUDGET RATHER THAN A CPU
+    # (2026-10-29). interview_max_sessions above is per process, so the fleet's
+    # real answer was it times however many tasks autoscaling had started — and
+    # the number that actually bounded the deployment was neither: it was
+    # Bedrock's "concurrent requests for Amazon Nova 2 Sonic" quota, 2 on this
+    # account, and a third student was refused UPSTREAM, after the session row
+    # was written and an attempt counted against their daily allowance. This is
+    # set to that quota (or to a lower number the college chooses to pay for),
+    # counted in `_open_records` over every `running` row with a fresh heartbeat
+    # fleet-wide, and refused 1013 BEFORE anything is written, so the student
+    # reads "too many interviews are running" and loses nothing. 0 is off, which
+    # is the default so a laptop and the test suite behave as they always have.
+    # The Main Admin's rehearsal writes no row and is not counted.
+    interview_max_concurrent: int = 0
+    # The per-task "live interviews" metric autoscaling tracks: one Embedded
+    # Metric Format line on stdout a minute (`app/interview_metrics.py`),
+    # dimensioned by this value — the task definition FAMILY, so a blue and a
+    # green service each scale on their own tasks. Blank is off, the default,
+    # because the line only means something where CloudWatch reads the
+    # container's stdout; the api task definition sets it.
+    interview_metrics_family: str = ""
     # The VOLUME half of the per-student cap, which concurrency alone never was:
     # 2 concurrent slots x back-to-back 15-minute sessions is ~96 interviews a
     # day from one account — each one billing a hosted speech-to-speech model
@@ -980,6 +1001,7 @@ class Settings(BaseSettings):
         "interview_local_max_tokens",
         "interview_max_sessions",
         "interview_max_sessions_per_user",
+        "interview_max_concurrent",
         "interview_max_per_student_per_day",
         "interview_min_answer_words",
         "interview_report_timeout_ms",
@@ -1076,10 +1098,14 @@ class Settings(BaseSettings):
         "interview_min_answer_words",
         "auth_revocation_cache_seconds",
         "ledger_edit_window_days",
+        "interview_max_concurrent",
     )
     @classmethod
     def _must_not_be_negative(cls, value: int, info: ValidationInfo) -> int:
-        """The three settings where 0 is a MEANING, not a typo.
+        """The settings where 0 is a MEANING, not a typo.
+
+        `interview_max_concurrent` joined the list on 2026-10-29: 0 there is
+        "no fleet ceiling", the behaviour before the setting existed.
 
         Deliberately not on the positive-only list above, and do not "fix" the
         omission by moving them: for these three, zero is the switch that turns a

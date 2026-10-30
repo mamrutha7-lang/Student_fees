@@ -32,6 +32,7 @@
     "cloudfrontLogDays": 30,
     "apiArm64": true,
     "jobScoutCompanies": true,
+    "interviewMaxConcurrent": 2,
     "natInstance": true,
     "natGateway": false,
     "natAmiId": "ami-0cf36b0c962e50fd7",

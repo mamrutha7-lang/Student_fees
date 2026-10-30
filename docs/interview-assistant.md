@@ -134,20 +134,39 @@ four tables, consent, the recorder, and every close code.
   the verdict, the clock's forced verdict, the scorecard request) travel as a
   **control note**, a cross-modal text input prefixed `[INTERVIEW CONTROL]`
   carrying a fixed directive from `interview_matrix.py`, and are **held while
-  a model turn is in flight** (`completionStart` to `completionEnd`) and sent
-  in the gap between turns.
-* **A note is a user turn — the reason for all of the above.** Bedrock
-  delivers the student's ASR transcript as the *first* block of the completion
-  in which Nova is already composing its reply. A note sent when that
-  transcript lands barges in on the reply: Nova abandons it, emits its
+  a model turn is in flight** (from the student's words to the reply's FINAL
+  text) and sent in the gap between turns.
+* **The turn boundaries Nova 2 Sonic actually sends** (measured 2026-10-29
+  from inside the account). One `completionStart` for the whole session and no
+  `completionEnd` between replies. Each reply is SPECULATIVE text (ends
+  `PARTIAL_TURN`), audio (ends `END_TURN`), then FINAL text (ends `END_TURN`),
+  which arrives about as long after the audio as the speech takes to play. The
+  student's words come just before the reply, as USER blocks ending
+  `PARTIAL_TURN`, and one answer can be several blocks. So the engine judges an
+  answer when the interviewer's reply to it **starts**, and treats the reply's
+  FINAL text as its end. Until that date it judged every USER block as an
+  answer and waited for a per-reply `completionEnd`: interviews reached the
+  wrap-up in under a minute, interviewer turns were not recorded, echo
+  detection compared against nothing, and the invitation, the verdict and the
+  scorecard were never sent. A reply whose FINAL text never comes is closed
+  once its audio has had time to play plus `_FINAL_TEXT_GRACE_S`, or when the
+  next reply starts; words no reply follows stop holding notes after
+  `_STUDENT_REPLY_WAIT_S` and are saved when the session closes.
+* **The browser hears of WRAP_UP with the verdict**, not at the fifth answer.
+  The client reads every `response.done` in wrap_up as "the report is being
+  written" and stops inviting speech, which would fire on the invitation to ask
+  questions itself.
+* **A note is a user turn — the reason for all of the above.** Nova delivers
+  the student's ASR transcript just before it starts its reply. A note sent
+  when that transcript lands barges in on the reply: Nova abandons it, emits its
   interruption marker, the engine forwards `reep.audio.flush`, and the browser
   throws away the queued audio — the voice vanishes mid-word and a different
   question follows. A note held until the reply has finished provokes a second
   question on top of the one just asked. So the phase directives are briefed
   instead of sent, and the stop beats are held and worded to set aside a
   dangling question. The invariant is pinned end to end in
-  `tests/test_interview_simulation.py`: nothing goes upstream between
-  `completionStart` and `completionEnd`. Nova has no client-owned-turn mode and
+  `tests/test_interview_simulation.py`: nothing goes upstream between the
+  student's words and the end of the reply to them. Nova has no client-owned-turn mode and
   documents non-interactive text for the system prompt and pre-audio history
   only, so there is no AWS-side setting that changes this.
 * **No clarification turn.** An engine that holds the turn can ask a too-short
@@ -739,7 +758,7 @@ The client maps each of these to a sentence (`CLOSE_MESSAGES` in
 | 1006 | handshake refused or network dropped — no reason available |
 | 1008 | not signed in, not a STUDENT, or a STUDENT session with no `studentId` (`interview_sessions.student_id` is NOT NULL, and meeting that as a 1011 thirty seconds in with an upstream session already billed is worse) |
 | 1011 | internal error |
-| 1013 | per-worker concurrency cap — the server is full, everyone is affected |
+| 1013 | per-worker concurrency cap, or the fleet's `INTERVIEW_MAX_CONCURRENT` ceiling (the AWS quota for Nova 2 Sonic streams) — the server is full, everyone is affected |
 | 4001 | the engine is not configured — on `nova`, no resolvable AWS region |
 | 4002 | upstream 403/429/5xx/handshake failure, **or** `create_response: false` was not applied (refusing beats running a known-double interview). On `nova` it is also every way Bedrock can refuse the stream — credentials, IAM, an unsupported region, a throttle at the door — and the log line names which |
 | 4003 | Origin refused (a deployment mistake) |

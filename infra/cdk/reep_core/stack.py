@@ -159,6 +159,27 @@ DEREGISTRATION_DELAY_SECONDS = 600
 API_DB_POOL_SIZE = 10
 API_DB_MAX_OVERFLOW = 10
 
+#: THE MOCK INTERVIEW SCALES ON ITSELF (2026-10-29). Each api task publishes how
+#: many interviews it is holding, once a minute, as an Embedded Metric Format
+#: line (`apps/api-py/app/interview_metrics.py`; the three names below must match
+#: it, and `tests/test_interview_metrics.py` there reads them out of this file).
+#: A target-tracking policy holds the AVERAGE at INTERVIEWS_PER_TASK_TARGET, so a
+#: batch of students starting together adds tasks within a few minutes and the
+#: service shrinks back to apiMinTasks once they finish — the idle bill does not
+#: move, and apiMaxTasks is still the ceiling on what a busy day can cost.
+INTERVIEW_METRIC_NAMESPACE = "REEP/Interviews"
+INTERVIEW_METRIC_NAME = "LiveInterviews"
+INTERVIEW_METRIC_DIMENSION = "Family"
+#: Measured, not guessed: Container Insights on 2026-10-29 put one live interview
+#: at 20-35 CPU units of a 512-unit (half-vCPU) task over a ~10-unit idle floor,
+#: i.e. 4-7% each. Eight is ~50% with room for the handshake spikes (46 units
+#: seen); the CPU policy at 60% stays as the backstop.
+INTERVIEWS_PER_TASK_TARGET = 8
+#: Where one task REFUSES (INTERVIEW_MAX_SESSIONS, close 1013): ~75% CPU by the
+#: same measurement, past which the 24 kHz relay is choppy audio rather than a
+#: slower page. The api's own default (100) assumes a far bigger task.
+INTERVIEWS_PER_TASK_MAX = 12
+
 #: The one retention number. RDS automated backups and the AWS Backup rule both
 #: read it, and the vault lock's minimum is derived from it.
 DEFAULT_BACKUP_RETENTION_DAYS = 35
@@ -290,6 +311,22 @@ class CoreStack(Stack):
         api_memory = int(opt("apiMemory", 1024))
         api_min = int(opt("apiMinTasks", 2))
         api_max = int(opt("apiMaxTasks", 10))
+        # THE FLEET'S INTERVIEW CEILING (INTERVIEW_MAX_CONCURRENT). Set it to the
+        # account's Bedrock quota for Nova 2 Sonic concurrent streams, or lower
+        # if the college wants a smaller bill: past the quota a student is
+        # refused UPSTREAM after their attempt was counted, while past this the
+        # api says "too many interviews are running" and counts nothing. 0 is
+        # off. Refused at synth when the tasks could never carry it, because a
+        # ceiling the fleet cannot reach is a promise the screen cannot keep.
+        interview_max_concurrent = int(opt("interviewMaxConcurrent", 0))
+        if interview_max_concurrent < 0:
+            raise ValueError(f"interviewMaxConcurrent must be 0 (off) or positive, got {interview_max_concurrent}")
+        if interview_max_concurrent > api_max * INTERVIEWS_PER_TASK_MAX:
+            raise ValueError(
+                f"interviewMaxConcurrent={interview_max_concurrent} needs more than apiMaxTasks={api_max} tasks of "
+                f"{INTERVIEWS_PER_TASK_MAX} interviews each; raise apiMaxTasks (and check the database's connection "
+                f"budget, API_DB_POOL_SIZE + API_DB_MAX_OVERFLOW per task) or lower the ceiling"
+            )
         # GRAVITON: the same vCPU and the same memory for ~20% less, and the
         # ONLY change on the cost review's list that alters no capacity at all
         # (docs/cost-review-2026-09.md). It is a FLAG, defaulting to x86, for
@@ -1866,6 +1903,12 @@ class CoreStack(Stack):
             # Same `harden_ecs` gate as every variable above.
             api_environment["DB_POOL_SIZE"] = str(API_DB_POOL_SIZE)
             api_environment["DB_MAX_OVERFLOW"] = str(API_DB_MAX_OVERFLOW)
+            # The two interview caps (2026-10-29): what one task carries before
+            # it refuses, sized to the half-vCPU it has, and the fleet's ceiling.
+            # INTERVIEW_METRICS_FAMILY is added per family in _api_task_def.
+            api_environment["INTERVIEW_MAX_SESSIONS"] = str(INTERVIEWS_PER_TASK_MAX)
+            if interview_max_concurrent:
+                api_environment["INTERVIEW_MAX_CONCURRENT"] = str(interview_max_concurrent)
             if job_scout_companies:
                 api_environment["JOB_SCOUT_COMPANY_BOARDS"] = "true"
 
@@ -1941,7 +1984,14 @@ class CoreStack(Stack):
                 image=ecs.ContainerImage.from_registry(f"{api_image_repo}:{image_tag}"),
                 essential=True,
                 port_mappings=[ecs.PortMapping(container_port=3300, protocol=ecs.Protocol.TCP)],
-                environment=dict(api_environment),  # WEB_ORIGIN is added below, once the distribution exists
+                # WEB_ORIGIN is added below, once the distribution exists. The
+                # metric family is this one's own, so a blue and a green service
+                # each scale on their own tasks; harden_ecs for the reason every
+                # variable above is.
+                environment={
+                    **api_environment,
+                    **({"INTERVIEW_METRICS_FAMILY": family} if harden_ecs else {}),
+                },
                 secrets=secrets,
                 logging=ecs.LogDrivers.aws_logs(log_group=log_group, stream_prefix="api"),
                 stop_timeout=Duration.seconds(STOP_TIMEOUT_SECONDS) if harden_ecs else None,
@@ -2035,6 +2085,30 @@ class CoreStack(Stack):
             scaling.scale_on_memory_utilization(
                 "MemoryTarget", target_utilization_percent=75, scale_in_cooldown=Duration.seconds(300), scale_out_cooldown=Duration.seconds(60)
             )
+            if harden:
+                # Live interviews per task (see INTERVIEWS_PER_TASK_TARGET). A
+                # new resource, so never in the import mirror; on `harden` and
+                # not `harden_ecs` like a grant, because it is inert until the
+                # task definition starts publishing the metric. Scale-in waits
+                # ten minutes rather than five: a batch of interviews arrives in
+                # waves, and a task removed between two waves is a cold start
+                # for the next one. A task chosen for scale-in drains through
+                # the target group's DEREGISTRATION_DELAY_SECONDS, which already
+                # outlasts the longest interview, so nobody is cut off.
+                scaling.scale_to_track_custom_metric(
+                    "InterviewTarget",
+                    metric=cw.Metric(
+                        namespace=INTERVIEW_METRIC_NAMESPACE,
+                        metric_name=INTERVIEW_METRIC_NAME,
+                        dimensions_map={INTERVIEW_METRIC_DIMENSION: td.family},
+                        statistic="Average",
+                        period=Duration.minutes(1),
+                    ),
+                    target_value=INTERVIEWS_PER_TASK_TARGET,
+                    policy_name="interview-target",
+                    scale_in_cooldown=Duration.seconds(600),
+                    scale_out_cooldown=Duration.seconds(60),
+                )
 
             # Terraform named the policies; PolicyName is immutable, so the import
             # must present the same names. scale_on_* returns nothing in this

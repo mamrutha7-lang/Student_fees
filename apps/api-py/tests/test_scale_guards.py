@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from conftest import requires_db
 
@@ -249,6 +249,103 @@ def test_open_records_refuses_when_live_sessions_exist_fleet_wide(
             db.execute(
                 delete(InterviewConsent).where(InterviewConsent.user_id == s.user_id)
             )
+            db.commit()
+
+
+# ---------------------------------------------------------------------------
+# The fleet ceiling: a budget across EVERY student, refused before any write
+# ---------------------------------------------------------------------------
+def _consented_student(make_user, prefix):
+    s = make_user(prefix)
+    with SessionLocal() as db:
+        student_id = db.scalar(select(Student.id).where(Student.user_id == s.user_id))
+        db.add(
+            InterviewConsent(
+                user_id=s.user_id,
+                version=settings.interview_consent_version,
+                scope_live_ai=True,
+                scope_store_transcript=True,
+                scope_store_audio=False,
+            )
+        )
+        db.commit()
+    return s, student_id
+
+
+def _live_fleet_now() -> int:
+    from datetime import timedelta
+
+    from app.routers.interview import _LIVE_ELSEWHERE_GRACE_S
+
+    with SessionLocal() as db:
+        return db.scalar(
+            select(func.count())
+            .select_from(InterviewSession)
+            .where(
+                InterviewSession.status == "running",
+                InterviewSession.heartbeat_at
+                >= datetime.now(timezone.utc) - timedelta(seconds=_LIVE_ELSEWHERE_GRACE_S),
+            )
+        ) or 0
+
+
+@requires_db
+def test_the_fleet_ceiling_refuses_a_different_student_before_writing(
+    make_user, monkeypatch
+):
+    """Two students, one slot: the second is refused by the FLEET count, and
+    the refusal writes no row, so no attempt is spent on an interview that
+    never ran. Relative to whatever is already live in the shared dev
+    database, because conftest says other runs may be using it."""
+    from datetime import timedelta
+
+    from app.routers.interview import _FleetFull, _open_records
+
+    a, a_id = _consented_student(make_user, "fleeta")
+    b, b_id = _consented_student(make_user, "fleetb")
+    try:
+        monkeypatch.setattr(settings, "interview_max_concurrent", _live_fleet_now() + 1)
+
+        _open_records(a.user_id, Role.STUDENT, a_id, "fleetA0", None)
+        with pytest.raises(_FleetFull):
+            _open_records(b.user_id, Role.STUDENT, b_id, "fleetB0", None)
+        with SessionLocal() as db:
+            assert not db.scalar(
+                select(func.count())
+                .select_from(InterviewSession)
+                .where(InterviewSession.student_id == b_id)
+            ), "a refused open must leave no session row behind"
+
+        # A killed task's row stops holding the slot once its heartbeat is
+        # stale — the same freshness rule as the per-student count.
+        with SessionLocal() as db:
+            db.execute(
+                InterviewSession.__table__.update()
+                .where(InterviewSession.student_id == a_id)
+                .values(heartbeat_at=datetime.now(timezone.utc) - timedelta(seconds=600))
+            )
+            db.commit()
+        _open_records(b.user_id, Role.STUDENT, b_id, "fleetB1", None)
+    finally:
+        with SessionLocal() as db:
+            for user, sid in ((a, a_id), (b, b_id)):
+                db.execute(delete(InterviewSession).where(InterviewSession.student_id == sid))
+                db.execute(delete(InterviewConsent).where(InterviewConsent.user_id == user.user_id))
+            db.commit()
+
+
+@requires_db
+def test_zero_means_no_fleet_ceiling(make_user, monkeypatch):
+    from app.routers.interview import _open_records
+
+    monkeypatch.setattr(settings, "interview_max_concurrent", 0)
+    s, sid = _consented_student(make_user, "fleetoff")
+    try:
+        _open_records(s.user_id, Role.STUDENT, sid, "fleetoff0", None)
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(InterviewSession).where(InterviewSession.student_id == sid))
+            db.execute(delete(InterviewConsent).where(InterviewConsent.user_id == s.user_id))
             db.commit()
 
 

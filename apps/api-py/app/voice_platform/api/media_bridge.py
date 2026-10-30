@@ -59,6 +59,7 @@ from ...routers.interview import (
     _CLOSE_NOT_A_STUDENT,
     _ConsentRequired,
     _DailyCapReached,
+    _FleetFull,
     _LIMITER,
     _LIVE_SESSIONS,
     _UserSessionCapReached,
@@ -242,6 +243,13 @@ async def media_bridge(websocket: WebSocket) -> None:
         await _refuse(
             websocket, conn_id, _CLOSE_USER_SESSION_CAP,
             "You already have a mock interview open. Close it and try again.", "fleet-wide per-user cap",
+        )
+        return
+    except _FleetFull:
+        _LIMITER.release(user_id)
+        await _refuse(
+            websocket, conn_id, _CLOSE_OVERLOADED,
+            "Too many interviews in progress", "fleet-wide ceiling",
         )
         return
     except _DailyCapReached as exc:

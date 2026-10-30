@@ -456,6 +456,30 @@ _TURN_TAKING_NOTE: Final[str] = (
 # read as "the interruption" costs at most one restated question.
 _INTERRUPTION_ANSWER_WINDOW_S: Final[float] = 20.0
 
+# THE TURN BOUNDARIES NOVA 2 SONIC ACTUALLY SENDS (measured 2026-10-29 against
+# amazon.nova-2-sonic-v1:0 from inside this account). ONE completionStart for
+# the whole session and NO completionEnd between replies, so nothing in the
+# stream says "this answer is over" or "this reply is over" in so many words.
+# Each reply is: ASSISTANT TEXT SPECULATIVE (contentEnd PARTIAL_TURN), ASSISTANT
+# AUDIO (contentEnd END_TURN), and then -- about as long after as the speech
+# takes to PLAY -- ASSISTANT TEXT FINAL (contentEnd END_TURN). A student's words
+# arrive as USER TEXT blocks ending PARTIAL_TURN, and one answer can be several.
+# So the student's answer is complete when the interviewer's reply to it
+# STARTS, and the reply is over when its FINAL text closes.
+#
+# How long the student's words may wait for that reply to start before a held
+# note may go upstream anyway. Nova delivers the transcript as it takes the
+# turn and starts its reply within about a second, so this is never reached in
+# an ordinary exchange; it exists for words Nova does not answer at all (a
+# "thanks" after the verdict), which must not hold the verdict back for ever.
+_STUDENT_REPLY_WAIT_S: Final[float] = 5.0
+# How long past the moment the interviewer's audio should have finished
+# PLAYING the engine waits for that reply's FINAL text before closing the reply
+# without it. The FINAL text is what releases a held note, so a reply that
+# never sends one would otherwise hold the invitation and the verdict until the
+# session cap.
+_FINAL_TEXT_GRACE_S: Final[float] = 4.0
+
 # Echo: the interviewer's own sentence coming back through the student's
 # speakers and being transcribed as the student's answer. Judged on the
 # LONGEST RUN of consecutive words the transcript shares with what the
@@ -905,34 +929,60 @@ class NovaSonicSession:
         # keyed by contentId, so without this map a transcript of the STUDENT
         # and the model's own planned speech are indistinguishable.
         self._content: dict[str, dict[str, str]] = {}
-        # The student's transcript, ACCUMULATED per content block and acted on
-        # only when the block closes. Nova is documented to deliver the ASR
-        # transcription as one content block, but nothing says it must arrive as
-        # one `textOutput` — and treating each event as a finished answer would
-        # count one answer as several, racing the phase machine to the wrap-up
-        # in half an interview. Closing the block is the unambiguous signal.
+        # The student's transcript, accumulated per content block: one block
+        # can arrive as several `textOutput` events.
         self._user_text: dict[str, list[str]] = {}
+        # ...and the ANSWER, accumulated across blocks. Nova ends every USER
+        # block PARTIAL_TURN and one answer can be several blocks, so a closed
+        # block is NOT a finished answer: judging each one counted one answer
+        # as several and raced the arc to the wrap-up in under a minute (29
+        # "answers" in one interview on 2026-10-29). The answer is judged when
+        # the interviewer's reply to it starts (`_finish_student_turn`).
+        # `_student_last_at` is None when nothing is waiting.
+        self._student_parts: list[str] = []
+        self._student_turn_id = ""
+        self._student_last_at: float | None = None
+        self._judging_answer = False
+        # Whether an interviewer reply is in flight: raised by its first
+        # SPECULATIVE text or audio block, lowered when its FINAL text closes
+        # (see _STUDENT_REPLY_WAIT_S for why those, and not completionStart /
+        # completionEnd, which Nova 2 Sonic does not send per reply).
         self._response_open = False
-        # Steering notes that arrived while a model turn was in flight.
-        # `_inject` is a USER text input, and Nova treats that as a barge-in: it
-        # stops generating and answers the new input. So a directive sent during
-        # an open response cuts the interviewer off mid-sentence and replaces
-        # the question the student was listening to -- and the interruption
-        # marker that follows makes `_on_text_output` flush the browser's PCM
-        # queue, so the voice does not tail off, it vanishes. Held here and sent
-        # in the gap between turns instead, which is the same deferral
-        # `_request_report` has always relied on for exactly this reason.
-        #
-        # `_response_open` is raised at completionStart, NOT at the first audio
-        # block. The order Bedrock documents for one completion is
-        # completionStart, the ASR transcript of the student's answer, the
-        # speculative text, the audio -- so the transcript that triggers a beat
-        # is always delivered INSIDE a completion the model is already
-        # composing. A flag raised by the audio block was still False when the
-        # transcript arrived, and the note went out onto the reply anyway;
-        # that is how the first fix for this symptom shipped with a passing
-        # test and the bug intact.
+        # Steering notes held back until no reply is in flight and none is
+        # about to start. `_inject` is a USER text input, and Nova treats that
+        # as a barge-in: it stops generating and answers the new input. So a
+        # directive sent during a reply cuts the interviewer off mid-sentence
+        # and replaces the question the student was listening to -- and the
+        # interruption marker that follows makes `_on_text_output` flush the
+        # browser's PCM queue, so the voice does not tail off, it vanishes.
+        # Every beat is decided on a transcript, and a transcript is judged as
+        # the reply to it starts, so a beat is always held; it goes upstream
+        # when that reply's FINAL text closes (`_take_next_beat`).
         self._pending_notes: list[str] = []
+        # Per-reply bookkeeping: whether any of the reply's content has
+        # arrived (completionStart can open the first reply before it does),
+        # and, for a FINAL text that never comes, when the audio started, how
+        # much of it there was (which says how long it takes to play), whether
+        # it has ended, whether the FINAL text closed before it did, and the
+        # deadline after which the reply is closed without its FINAL text.
+        self._reply_has_content = False
+        self._reply_audio_started_at: float | None = None
+        self._reply_audio_last_at: float | None = None
+        self._reply_audio_bytes = 0
+        self._reply_audio_ended = False
+        self._reply_final_closed = False
+        self._final_deadline: float | None = None
+        # The verdict note has gone upstream; the reply that follows it is the
+        # verdict, and only once THAT reply is over is the scorecard asked for.
+        self._verdict_sent = False
+        self._reply_follows_verdict = False
+        self._verdict_spoken = False
+        # WRAP_UP is announced to the browser when the verdict note goes up,
+        # not when the machine ticks: the client reads every `response.done`
+        # in wrap_up as "the interview is over, the report is being written",
+        # and the invitation and its answer still come between the tick and
+        # the verdict.
+        self._wrap_up_announced = False
         # The model's FINAL sentence-level transcript of what it actually said,
         # which is what gets recorded. The SPECULATIVE text is streamed to the
         # browser live (it is what makes the caption appear while the
@@ -1171,6 +1221,7 @@ class NovaSonicSession:
             await upstream.aclose(
                 prompt_name=self._prompt_name, audio_content=self._audio_content
             )
+            self._record_unanswered_words()
             await self._drain_writes()
             await self._finalize_session(code, reason)
             self._log.info(
@@ -1514,11 +1565,9 @@ class NovaSonicSession:
             )
 
         if name == "completionStart":
-            # THE FIRST EVENT OF A MODEL TURN, before the ASR transcript, the
-            # speculative text and the audio. It is what makes `_steer` hold a
-            # note: by the time the student's transcript arrives the model is
-            # already composing its reply, and this is the only event that
-            # says so before the audio does.
+            # Nova 2 Sonic sends ONE of these, ahead of its first reply, and
+            # none per turn after that. It opens that first reply; every later
+            # one is opened by its own content (`_on_reply_content`).
             await self._begin_response()
         elif name == "contentStart":
             await self._on_content_start(payload)
@@ -1567,7 +1616,11 @@ class NovaSonicSession:
         if len(self._content) > 256:
             self._content.pop(next(iter(self._content)))
         if meta["type"] == "AUDIO" and meta["role"] == _ROLE_ASSISTANT:
-            await self._begin_response()
+            # The interviewer's reply has begun (or goes on). Its SPECULATIVE
+            # text counts too, but only once it carries words
+            # (`_on_text_output`): Nova's interruption marker also arrives as
+            # assistant text, and it starts nothing.
+            await self._on_reply_content()
 
     async def _on_text_output(self, payload: dict[str, Any]) -> None:
         content_id = str(payload.get("contentId") or "")
@@ -1586,11 +1639,21 @@ class NovaSonicSession:
             return
         if role != _ROLE_ASSISTANT or not text:
             return
+        if stage != _STAGE_FINAL:
+            await self._on_reply_content()
         if stage == _STAGE_FINAL:
             # What the interviewer ACTUALLY said, sentence by sentence. Recorded
             # rather than the speculative text: on a barge-in the two differ,
             # and the transcript a mentor reads must match the audio.
-            self._assistant_final.append(text)
+            if self._response_open:
+                self._assistant_final.append(text)
+            else:
+                # A FINAL text for a reply already closed (it was closed
+                # without one, or this is a second block). Too late to record,
+                # and still what an echo of that reply would match.
+                self._last_interviewer_text = (
+                    f"{self._last_interviewer_text} {text.strip()}".strip()
+                )
             return
         self._assistant_speculative.append(text)
         # SPECULATIVE: the live caption, aliased onto the event name the client
@@ -1628,6 +1691,11 @@ class NovaSonicSession:
         if not pcm:
             return
         self._assistant_spoke = True
+        now = time.monotonic()
+        if self._reply_audio_started_at is None:
+            self._reply_audio_started_at = now
+        self._reply_audio_last_at = now
+        self._reply_audio_bytes += len(pcm)
         self._capture(TRACK_INTERVIEWER, pcm)
         for start in range(0, len(pcm), _DOWNLINK_CHUNK_BYTES):
             if self._ws.client_state is not WebSocketState.CONNECTED:
@@ -1654,15 +1722,20 @@ class NovaSonicSession:
         stop_reason = str(payload.get("stopReason") or "")
 
         if kind == "TEXT" and meta.get("role") == _ROLE_USER:
-            # The student's answer is complete. Everything that decides the arc
-            # happens here and nowhere else.
+            # One block of the student's words. NOT a finished answer: Nova
+            # ends every USER block PARTIAL_TURN, and one answer can be
+            # several blocks. Held until the interviewer's reply starts.
             parts = self._user_text.pop(content_id, [])
             # Joined the same way the interviewer's own text is: each piece
             # stripped, one space between. Concatenating raw leaves a double
             # space where a piece arrived with a leading one, and a transcript
             # a mentor reads should not carry the transport's seams.
             joined = " ".join(part.strip() for part in parts if part.strip())
-            await self._on_student_transcript(joined, content_id)
+            if joined:
+                self._student_parts.append(joined)
+            if not self._student_turn_id:
+                self._student_turn_id = content_id
+            self._student_last_at = time.monotonic()
             return
 
         if kind == "AUDIO" and stop_reason in ("END_TURN", "INTERRUPTED"):
@@ -1678,43 +1751,166 @@ class NovaSonicSession:
             # relay had two API generations to serve); this engine sends the one
             # that matches what it actually is.
             await self._send_control({"type": "response.audio.done"})
+            if self._response_open:
+                self._reply_audio_ended = True
+                if self._reply_final_closed:
+                    await self._on_reply_finished()
+                else:
+                    self._final_deadline = self._final_text_deadline(stop_reason)
+        elif (
+            kind == "TEXT"
+            and meta.get("role") == _ROLE_ASSISTANT
+            and meta.get("stage") == _STAGE_FINAL
+            and stop_reason in ("END_TURN", "INTERRUPTED", "")
+            and self._response_open
+        ):
+            # THE END OF THE INTERVIEWER'S REPLY: its transcript of what it
+            # actually said, which Nova sends once the speech has played.
+            if self._reply_audio_ended or not self._assistant_spoke:
+                await self._on_reply_finished()
+            else:
+                # The words closed before the audio did. The reply is over
+                # when the audio ends too, or once it has had time to play.
+                self._reply_final_closed = True
+                self._final_deadline = self._final_text_deadline("")
         elif kind == "TOOL" and self._pending_tool is not None:
             await self._settle_tool_use()
 
-    async def _on_completion_end(self) -> None:
-        """One model turn is over: record what was said, then take the next beat.
+    def _final_text_deadline(self, stop_reason: str) -> float:
+        """When to stop waiting for this reply's FINAL text.
 
-        THE ONLY PLACE the scorecard is requested. It has to be here rather than
-        at the moment the verdict was asked for, because a request that arrives
-        while the interviewer is still speaking is a second turn on top of the
-        verdict — the student would hear the interviewer talk over its own
-        closing words.
+        Nova sends it once the speech has PLAYED, and the audio arrives faster
+        than real time, so the deadline is measured from when the audio started
+        plus how long it takes to play. An interrupted reply stops playing at
+        once, so its FINAL text is due straight away.
         """
+        if (
+            stop_reason == "INTERRUPTED"
+            or self._reply_audio_started_at is None
+            or self._reply_audio_last_at is None
+        ):
+            return time.monotonic() + _FINAL_TEXT_GRACE_S
+        playback_s = self._reply_audio_bytes / (_OUTPUT_RATE_HZ * 2)
+        played_at = max(self._reply_audio_last_at, self._reply_audio_started_at + playback_s)
+        return played_at + _FINAL_TEXT_GRACE_S
+
+    async def _on_completion_end(self) -> None:
+        """A completion closed. Nova 2 Sonic sends this at the end of a stream,
+        not per reply; it is still honoured as a reply's end, so a stream that
+        does send it per reply loses nothing."""
+        if self._response_open:
+            await self._on_reply_finished()
+        else:
+            await self._take_next_beat()
+
+    async def _on_reply_content(self) -> None:
+        """A block of the interviewer's reply is starting.
+
+        The first one opens the reply, and that is also the moment the
+        student's answer is complete: Nova takes the turn when the student
+        stops, so every word of that answer has arrived by now. Judged before
+        the reply opens so the browser shows the student's line before the
+        interviewer's, with `_holding` keeping any beat it decides held.
+        """
+        if self._response_open and self._reply_audio_ended:
+            # A new reply while the last one is still open: its FINAL text
+            # never came. Record it as it is and start the new one. Held notes
+            # stay held -- this new reply is in flight.
+            self._log.warning(
+                "An interviewer reply sent no final transcript before the next "
+                "one began; recorded without it"
+            )
+            await self._end_response()
+        if self._response_open and self._reply_has_content:
+            return
+        await self._finish_student_turn()
+        # A no-op when completionStart has already opened this reply.
+        await self._begin_response()
+        self._reply_has_content = True
+
+    async def _on_reply_finished(self) -> None:
+        """One interviewer reply is over: record it, then take the next beat."""
+        verdict_reply = self._reply_follows_verdict
         await self._end_response()
+        if verdict_reply:
+            self._verdict_spoken = True
+        await self._take_next_beat()
+
+    def _holding(self) -> bool:
+        """Must a control note wait? Yes while a reply is in flight, and while
+        the student's words are waiting for the reply that is about to start."""
+        if self._response_open or self._judging_answer:
+            return True
+        return (
+            self._student_last_at is not None
+            and time.monotonic() - self._student_last_at < _STUDENT_REPLY_WAIT_S
+        )
+
+    async def _take_next_beat(self) -> None:
+        """Between replies: send what was held, or ask for the scorecard.
+
+        THE ONLY PLACE the scorecard is requested, and only once the verdict
+        has been SPOKEN: a request that arrives while the interviewer is still
+        speaking is a second turn on top of the verdict, and the student would
+        hear the interviewer talk over its own closing words. Called when a
+        reply ends and on every watchdog tick, so a note held behind words Nova
+        never answered still goes.
+        """
+        if self._holding():
+            return
         if await self._drain_pending_notes():
             # A held directive just went upstream, so the next interviewer turn
             # is the one it asks for -- the verdict, in the case that matters.
-            # Asking for the scorecard here would ask for it before that turn
-            # has been spoken, which is the same "one turn early" mistake this
-            # method's docstring exists to prevent.
             return
-        if self._verdict_requested and not self._report_requested:
+        if self._verdict_spoken and not self._report_requested:
             await self._request_report()
+
+    async def _finish_student_turn(self) -> None:
+        """Judge the words the student said since the interviewer last spoke."""
+        if self._student_last_at is None:
+            return
+        parts, self._student_parts = self._student_parts, []
+        turn_id, self._student_turn_id = self._student_turn_id, ""
+        # A beat decided on this answer is held (`_holding`) rather than sent
+        # onto the reply that is starting, however late that reply came.
+        self._judging_answer = True
+        try:
+            await self._on_student_transcript(" ".join(parts), turn_id)
+        finally:
+            self._judging_answer = False
+            self._student_last_at = None
+
+    def _record_unanswered_words(self) -> None:
+        """The session is closing with student words no reply ever followed:
+        the "thank you" after the verdict, or an answer the socket cut. Saved as
+        what they were; nothing is steered or advanced on them now."""
+        if self._student_last_at is None:
+            return
+        transcript = " ".join(self._student_parts).strip()
+        turn_id = self._student_turn_id
+        self._student_parts, self._student_turn_id = [], ""
+        self._student_last_at = None
+        self._emit_turn(
+            _SENDER_STUDENT,
+            transcript,
+            f"nova-{turn_id or self._turn_seq + 1}",
+            status="completed" if transcript else "empty",
+            quality=None if self._awaiting_candidate_questions else classify_answer(transcript),
+        )
 
     # -- the student's turn ------------------------------------------------
 
     async def _on_student_transcript(self, text: str, content_id: str) -> None:
         """One student answer: recorded, judged, and (maybe) a beat of the arc.
 
-        Nova has already begun composing its reply by the time this arrives —
-        it owns the turn, and this transcript is a block INSIDE the completion
-        it is composing — so nothing here waits for anything, and nothing
-        here reaches the model directly. The phase tick is recorded and
-        announced to the browser; the model was briefed on the question
-        phases at the handshake and moves on the same rule. The two beats
-        that must land at a fixed point — the invitation to ask questions and
-        the verdict — go through `_steer`, which holds them until this reply
-        has finished.
+        Called as the interviewer's reply to it starts (`_finish_student_turn`):
+        Nova owns the turn and is already speaking, so nothing here waits for
+        anything, and nothing here reaches the model directly. The phase tick
+        is recorded and announced to the browser; the model was briefed on the
+        question phases at the handshake and moves on the same rule. The two
+        beats that must land at a fixed point — the invitation to ask
+        questions and the verdict — go through `_steer`, which holds them
+        until this reply has finished.
         """
         transcript = text.strip()
         await self._send_control({"type": "input_audio_buffer.speech_stopped"})
@@ -1799,10 +1995,13 @@ class NovaSonicSession:
             return
         if not self._machine.student_answered():
             return
-        await self._announce_phase()
         if self._machine.phase is InterviewPhase.WRAP_UP:
+            # Announced when the verdict goes up, not now -- see
+            # `_wrap_up_announced`.
             self._awaiting_candidate_questions = True
             await self._steer(turn_directive("invite_questions"))
+            return
+        await self._announce_phase()
         # PROBING and DEEP_DIVE send nothing. The model was briefed on both at
         # the handshake (`build_arc_briefing`) and moves on the rule this
         # machine just applied; a note here would either barge in on the reply
@@ -1828,9 +2027,9 @@ class NovaSonicSession:
     async def _begin_response(self) -> None:
         """One model turn opens. The browser starts a fresh PCM stream.
 
-        Reached from completionStart, which precedes everything else in the
-        turn, and again from the first ASSISTANT audio block as a fallback for
-        a stream that never sent one; the guard makes the second a no-op.
+        Reached from the reply's first SPECULATIVE text or audio block
+        (`_on_reply_content`), and from the one completionStart Nova sends
+        ahead of its first reply; the guard makes a second call a no-op.
         Between here and `_end_response` a control note must not go upstream
         -- see `_steer`.
 
@@ -1843,6 +2042,14 @@ class NovaSonicSession:
         self._response_open = True
         self._assistant_final = []
         self._assistant_spoke = False
+        self._reply_has_content = False
+        self._reply_audio_started_at = None
+        self._reply_audio_last_at = None
+        self._reply_audio_bytes = 0
+        self._reply_audio_ended = False
+        self._reply_final_closed = False
+        self._final_deadline = None
+        self._reply_follows_verdict = self._verdict_sent
         await self._send_control({"type": "response.created"})
 
     async def _end_response(self) -> None:
@@ -1858,6 +2065,7 @@ class NovaSonicSession:
         )
         was_open = self._response_open
         self._response_open = False
+        self._final_deadline = None
         self._assistant_final = []
         self._assistant_speculative = []
         self._interrupted_this_turn = False
@@ -1867,7 +2075,11 @@ class NovaSonicSession:
             # student's speakers were playing when it was cut. Echo is judged
             # on the longest shared RUN of words, so the duplication of the
             # finished sentences costs nothing.
-            self._last_interviewer_text = " ".join(t for t in (spoken, planned) if t)
+            # On an ordinary reply the two are the same sentence, kept once.
+            if spoken and planned and spoken != planned:
+                self._last_interviewer_text = f"{spoken} {planned}"
+            else:
+                self._last_interviewer_text = spoken or planned
         if was_open and (spoken or self._assistant_spoke):
             self._emit_turn(
                 _SENDER_INTERVIEWER,
@@ -1893,18 +2105,19 @@ class NovaSonicSession:
     async def _steer(self, body: str) -> None:
         """One control note, held back while a model turn is in flight.
 
-        "In flight" is completionStart to completionEnd, which spans the ASR
-        transcript of the answer that provoked the turn as well as the audio,
-        so a beat decided on that transcript always waits. The directive still
-        governs what happens next; it simply arrives between turns rather than
-        on top of one. See `_pending_notes` for what injecting mid-turn does
-        to the audio, and note every directive sent this way says what to do
-        with a question the model has just asked and not had answered.
+        "In flight" is `_holding`: from the moment the student's words arrive,
+        through the reply they provoke, until that reply's FINAL text closes.
+        A beat decided on a transcript therefore always waits. The directive
+        still governs what happens next; it simply arrives between turns
+        rather than on top of one. See `_pending_notes` for what injecting
+        mid-turn does to the audio, and note every directive sent this way
+        says what to do with a question the model has just asked and not had
+        answered.
         """
-        if self._response_open:
+        if self._holding():
             self._pending_notes.append(body)
             return
-        await self._inject(body)
+        await self._send_note(body)
 
     async def _drain_pending_notes(self) -> bool:
         """Send what was held back. True when anything went, which means a new
@@ -1913,8 +2126,23 @@ class NovaSonicSession:
             return False
         held, self._pending_notes = self._pending_notes, []
         for note in held:
-            await self._inject(note)
+            await self._send_note(note)
         return True
+
+    async def _send_note(self, body: str) -> None:
+        """A held or immediate beat, on its way upstream.
+
+        The verdict is the one with consequences beyond itself: the reply that
+        follows it is the verdict, after which the scorecard is asked for, and
+        it is the moment the browser is told the interview is in its wrap-up.
+        """
+        await self._inject(body)
+        if body != turn_directive("verdict"):
+            return
+        self._verdict_sent = True
+        if self._machine.phase is InterviewPhase.WRAP_UP and not self._wrap_up_announced:
+            self._wrap_up_announced = True
+            await self._announce_phase()
 
     async def _inject(self, body: str) -> None:
         """One control note into the live session, as cross-modal text input.
@@ -1996,8 +2224,8 @@ class NovaSonicSession:
         if spec is None or self._verdict_requested:
             return
         self._awaiting_candidate_questions = False
-        if self._machine.force_wrap_up():
-            await self._announce_phase()
+        # The browser hears of WRAP_UP when the verdict goes (`_send_note`).
+        self._machine.force_wrap_up()
         self._verdict_requested = True
         self._log.info("Forcing the wrap-up: the session cap is close")
         await self._steer(turn_directive("verdict"))
@@ -2192,6 +2420,8 @@ class NovaSonicSession:
                 # saved; the evaluation row says why there is no scorecard.
                 await self._finish_report(None, "timeout")
 
+            await self._check_turn_deadlines(now)
+
             if elapsed >= cap:
                 raise _SessionEnded(_CLOSE_SESSION_CAP, "Session cap reached")
             if now - self._last_audio_at >= idle_cap:
@@ -2200,6 +2430,27 @@ class NovaSonicSession:
                 )
             if elapsed >= wrap_at:
                 await self._force_wrap_up()
+
+    async def _check_turn_deadlines(self, now: float) -> None:
+        """The two waits Nova's stream can leave open, checked once a tick."""
+        deadline = self._final_deadline
+        if deadline is None and self._reply_audio_started_at is not None:
+            # Audio arrived and no block of it has ended with a stop reason.
+            # Once that speech has played, and a second grace has passed, the
+            # reply is over whatever it failed to say.
+            deadline = self._final_text_deadline("") + _FINAL_TEXT_GRACE_S
+        if self._response_open and deadline is not None and now >= deadline:
+            # The reply's audio has played and its FINAL text never came.
+            # Closing it is what lets a held beat go.
+            self._log.warning(
+                "An interviewer reply sent no final transcript; closing it "
+                "without one"
+            )
+            await self._on_reply_finished()
+            return
+        # A note held behind words Nova never answered goes once those words
+        # are stale (`_holding`). A no-op otherwise.
+        await self._take_next_beat()
 
     # -- downstream --------------------------------------------------------
 
