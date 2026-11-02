@@ -253,6 +253,13 @@ export const HOME_GROUPS: readonly TaskGroup[] = [
         capability: 'admin.exports',
         words: 'export csv excel file',
       },
+      {
+        label: 'Manage student fees',
+        icon: 'table_rows',
+        path: '/admin/fees',
+        mainAdminOnly: true,
+        words: 'fees payment razorpay due receipt',
+      },
     ],
   },
   {
