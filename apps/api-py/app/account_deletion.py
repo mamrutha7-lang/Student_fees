@@ -125,6 +125,12 @@ ACCOUNT_POLICY: dict[tuple[str, str], str] = {
 #: student-owned table is decided by both destructors and not by whichever one
 #: its author happened to read.
 NOT_PER_ACCOUNT: dict[str, str] = {
+    "fee_demands": (
+        "a demand is the office's act of raising a fee, and a group demand names "
+        "many students; this student's own claims go with them (fee_charges is "
+        "ON DELETE CASCADE from students), and the demand keeps its title and "
+        "amount, which name nobody"
+    ),
     "import_runs": (
         "a spreadsheet run is the office's receipt for one upload, not one "
         "student's row; the lines naming this student go (import_rows), the "

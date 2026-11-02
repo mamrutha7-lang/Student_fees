@@ -1,0 +1,270 @@
+<div class="panel" data-p="admin-fees">
+  <div class="dt-header">
+    <div>
+      <div class="crumb">Operations / Student fees</div>
+      <h1 class="dt-title">Student fees</h1>
+      <div class="dt-sub">
+        Raise a fee for a student, then track it until it is paid · students see every raised fee
+        and its status in My fees
+      </div>
+    </div>
+    <div class="head-actions">
+      <a class="btn" [href]="exportUrl()" download>
+        <span class="icon" aria-hidden="true">download</span>Export
+      </a>
+      <button type="button" class="btn" (click)="structureOpen.set(true)">
+        <span class="icon" aria-hidden="true">tune</span>Fee structure
+      </button>
+      <button type="button" class="btn" [disabled]="reminding()" (click)="remind(false)">
+        <span class="icon" aria-hidden="true">notifications</span>
+        {{ reminding() ? 'Sending…' : 'Send reminders' }}
+      </button>
+      <button type="button" class="btn primary" (click)="openRaise()">
+        <span class="icon" aria-hidden="true">add</span>Raise a fee
+      </button>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------ filters -->
+  @if (options(); as opts) {
+    <div class="filter-bar">
+      <label class="pick">
+        <span>Department</span>
+        <select [value]="departmentId()" (change)="setDepartment($any($event.target).value)">
+          <option value="">All</option>
+          @for (d of opts.departments; track d.value) {
+            <option [value]="d.value">{{ d.label }}</option>
+          }
+        </select>
+      </label>
+      <label class="pick">
+        <span>Course</span>
+        <select [value]="courseId()" (change)="setCourse($any($event.target).value)">
+          <option value="">All</option>
+          @for (c of courses(); track c.value) {
+            <option [value]="c.value">{{ c.label }}</option>
+          }
+        </select>
+      </label>
+      <label class="pick">
+        <span>Academic year</span>
+        <select [value]="academicYear()" (change)="setYear($any($event.target).value)">
+          @for (y of opts.academic_years; track y) {
+            <option [value]="y" [selected]="y === academicYear()">{{ y }}</option>
+          }
+        </select>
+      </label>
+      <label class="pick">
+        <span>Quota</span>
+        <select [value]="quota()" (change)="setQuota($any($event.target).value)">
+          <option value="">Management, CET</option>
+          @for (q of opts.quotas; track q.value) {
+            <option [value]="q.value">{{ q.label }}</option>
+          }
+        </select>
+      </label>
+      <label class="pick">
+        <span>Status</span>
+        <select [value]="status()" (change)="setStatus($any($event.target).value)">
+          <option value="">All</option>
+          <option value="NOT_RAISED">Not raised</option>
+          <option value="PENDING">Pending</option>
+          <option value="OVERDUE">Overdue</option>
+          <option value="PAID">Paid</option>
+        </select>
+      </label>
+      <span class="unit-note">Amounts in ₹</span>
+    </div>
+  }
+
+  @if (error(); as problem) {
+    <div class="notice risk" role="alert">
+      <span class="icon" aria-hidden="true">error</span><div>{{ problem }}</div>
+    </div>
+  }
+  @if (notice(); as message) {
+    <div class="notice good" role="status">
+      <span class="icon" aria-hidden="true">check_circle</span><div>{{ message }}</div>
+      <button type="button" class="btn ghost sm" aria-label="Dismiss" (click)="notice.set(null)">
+        <span class="icon" aria-hidden="true">close</span>
+      </button>
+    </div>
+  }
+
+  <!-- ------------------------------------------------------------- cards -->
+  @if (roster(); as r) {
+    <div class="fee-kpis">
+      <div class="kpi-card">
+        <div class="eyebrow">Fees raised</div>
+        <div class="num">{{ r.totals.students_with_fee }} of {{ r.totals.students }}</div>
+        <div class="kpi-foot">students with a raised fee</div>
+      </div>
+      <div class="kpi-card">
+        <div class="eyebrow">Pending</div>
+        <div class="num">{{ rupees(r.totals.pending_rupees) }}</div>
+        <div class="kpi-foot">raised, not yet paid</div>
+      </div>
+      <div class="kpi-card">
+        <div class="eyebrow">Paid</div>
+        <div class="num">{{ rupees(r.totals.paid_rupees) }}</div>
+        <div class="kpi-foot">{{ r.totals.payments_recorded }} payments recorded</div>
+      </div>
+      <div class="kpi-card">
+        <div class="eyebrow">Overdue</div>
+        <div class="num" [class.risk-num]="r.totals.overdue_students > 0">
+          {{ r.totals.overdue_students }} students
+        </div>
+        <div class="kpi-foot">past the due date</div>
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------------------- table -->
+  <div class="card table-card">
+    <div class="table-tools">
+      <label class="sr-only" for="fee-quick-filter">Quick filter</label>
+      <div class="search">
+        <span class="icon" aria-hidden="true">search</span>
+        <input
+          id="fee-quick-filter"
+          class="ctrl"
+          type="search"
+          placeholder="Quick filter…"
+          [value]="quickFilter()"
+          (input)="setQuickFilter($any($event.target).value)"
+        />
+      </div>
+      <button type="button" class="btn" [disabled]="reminding() || !selected().size" (click)="remind(true)">
+        <span class="icon" aria-hidden="true">send</span>Send reminder
+        @if (selected().size) {
+          ({{ selected().size }})
+        }
+      </button>
+    </div>
+
+    <div class="table-scroll">
+      <table class="dt-table fee-table">
+        <thead>
+          <tr>
+            <th class="col-check">
+              <input
+                type="checkbox"
+                aria-label="Select every student on this page"
+                [checked]="allOnPageSelected()"
+                (change)="togglePage()"
+              />
+            </th>
+            <th>Student ID</th>
+            <th>Student</th>
+            <th>Action</th>
+            <th>Course name</th>
+            <th>Academic year</th>
+            <th class="num-col">Fee amount</th>
+            <th>Quota type</th>
+            <th>Raised on</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of pageRows(); track row.student_id) {
+            <tr>
+              <td class="col-check">
+                <input
+                  type="checkbox"
+                  [attr.aria-label]="'Select ' + row.name"
+                  [checked]="selected().has(row.student_id)"
+                  (change)="toggle(row.student_id)"
+                />
+              </td>
+              <td class="mono">{{ row.usn ?? '—' }}</td>
+              <td>
+                <span class="who">
+                  <span class="avatar" aria-hidden="true">{{ initials(row.name) }}</span>{{ row.name }}
+                </span>
+              </td>
+              <td>
+                @if (row.fee_count === 0) {
+                  <button type="button" class="btn primary sm" (click)="openRaise(row)">Raise fee</button>
+                } @else {
+                  <button type="button" class="btn sm" (click)="viewing.set(row)">View</button>
+                }
+              </td>
+              <td>{{ row.course_name ?? '—' }}</td>
+              <td>{{ row.academic_year }}</td>
+              <td class="num-col">{{ row.fee_count ? rupees(row.amount_rupees) : '—' }}</td>
+              <td>
+                <span class="quota" [class.cet]="row.quota === 'CET'" [class.none]="!row.quota">
+                  {{ quotaLabel(row.quota) }}
+                </span>
+              </td>
+              <td>{{ calendarDay(row.raised_on) }}</td>
+              <td>
+                <span class="chip status-chip {{ statusTone(row.status) }}">
+                  <span class="dot" aria-hidden="true"></span>{{ statusLabels[row.status] ?? row.status }}
+                </span>
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="10" class="empty">
+                {{ loading() ? 'Loading…' : 'No current student matches these filters.' }}
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-foot">
+      <span>{{ pageRows().length }} of {{ filtered().length }} students</span>
+      <span class="pager">
+        <button type="button" class="btn ghost sm" aria-label="Previous page" [disabled]="page() === 0" (click)="previousPage()">
+          <span class="icon" aria-hidden="true">chevron_left</span>
+        </button>
+        Page {{ page() + 1 }} of {{ pageCount() }}
+        <button
+          type="button"
+          class="btn ghost sm"
+          aria-label="Next page"
+          [disabled]="page() >= pageCount() - 1"
+          (click)="nextPage()"
+        >
+          <span class="icon" aria-hidden="true">chevron_right</span>
+        </button>
+      </span>
+    </div>
+  </div>
+</div>
+
+@if (raiseFor() !== null && options()) {
+  <app-raise-fee-dialog
+    [options]="options()!"
+    [studentId]="raiseFor() || null"
+    [initialSearch]="raiseSearch()"
+    [academicYear]="academicYear()"
+    [departmentId]="departmentId()"
+    [courseId]="courseId()"
+    (closed)="raiseFor.set(null)"
+    (raised)="onRaised($event)"
+  />
+}
+
+@if (structureOpen() && options()) {
+  <app-fee-structure-dialog
+    [options]="options()!"
+    [academicYear]="academicYear()"
+    (closed)="structureOpen.set(false)"
+  />
+}
+
+@if (viewing(); as row) {
+  @if (options(); as opts) {
+    <app-student-fees-dialog
+      [student]="row"
+      [options]="opts"
+      (closed)="viewing.set(null)"
+      (changed)="onPaymentRecorded()"
+      (raiseAnother)="viewing.set(null); openRaise(row)"
+    />
+  }
+}

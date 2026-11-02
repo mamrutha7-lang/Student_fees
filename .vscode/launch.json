@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    {
+      "name": "REEP API (debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--port", "3300"],
+      "cwd": "${workspaceFolder}/apps/api-py",
+      "python": "${workspaceFolder}/apps/api-py/.venv/Scripts/python.exe",
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    }
+  ]
+}

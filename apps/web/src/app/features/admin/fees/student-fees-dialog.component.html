@@ -1,0 +1,114 @@
+<div class="dialog-backdrop" (click)="closed.emit()">
+  <div
+    class="dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="student-fees-title"
+    tabindex="-1"
+    (click)="$event.stopPropagation()"
+  >
+    <header class="dialog-head">
+      <div>
+        <h2 class="dialog-title" id="student-fees-title">{{ student().name }}</h2>
+        <p class="dialog-sub">
+          {{ student().usn ?? 'No Student ID' }} · {{ student().course_name ?? 'No course' }} ·
+          {{ quotaLabel(student().quota) }} quota
+        </p>
+      </div>
+      <button type="button" class="btn ghost sm" aria-label="Close" (click)="closed.emit()">
+        <span class="icon" aria-hidden="true">close</span>
+      </button>
+    </header>
+
+    <div class="dialog-body">
+      <table class="dt-table">
+        <thead>
+          <tr>
+            <th>Fee</th>
+            <th>Year</th>
+            <th class="num-col">Amount</th>
+            <th>Due date</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of charges(); track c.id) {
+            <tr>
+              <td>{{ c.demand_title }}</td>
+              <td>{{ c.academic_year ?? '—' }}</td>
+              <td class="num-col">{{ rupees(c.amount_rupees) }}</td>
+              <td>{{ calendarDay(c.due_on) }}</td>
+              <td>
+                <span class="chip {{ statusTone(c.display_status ?? c.status) }}">
+                  {{ statusLabels[c.display_status ?? c.status] ?? c.status }}
+                </span>
+                @if (c.status === 'PAID') {
+                  <div class="paid-by">{{ methodLabel(c.payment_method) }} · {{ calendarDay(c.paid_at) }}</div>
+                }
+              </td>
+              <td class="row-actions">
+                @if (c.status === 'PAID') {
+                  <a class="btn sm" [href]="receiptUrl(c.id)" download>
+                    <span class="icon" aria-hidden="true">download</span>Receipt
+                  </a>
+                } @else if (c.status === 'PENDING') {
+                  <button type="button" class="btn sm" (click)="openPayment(c.id)">Record payment</button>
+                }
+              </td>
+            </tr>
+            @if (paying() === c.id) {
+              <tr class="pay-row">
+                <td colspan="6">
+                  <form class="pay-form" (submit)="$event.preventDefault(); recordPayment()">
+                    <div class="field">
+                      <label for="pay-method">Paid by</label>
+                      <select id="pay-method" [value]="method()" (change)="method.set($any($event.target).value)">
+                        @for (m of options().payment_methods; track m.value) {
+                          <option [value]="m.value">{{ m.label }}</option>
+                        }
+                      </select>
+                    </div>
+                    <div class="field grow">
+                      <label for="pay-reference">
+                        Reference {{ method() === 'CASH' ? '(optional)' : '(cheque, draft or bank number)' }}
+                      </label>
+                      <input
+                        id="pay-reference"
+                        type="text"
+                        maxlength="120"
+                        [value]="reference()"
+                        (input)="reference.set($any($event.target).value)"
+                      />
+                    </div>
+                    <button type="button" class="btn" (click)="paying.set(null)">Cancel</button>
+                    <button type="submit" class="btn primary" [disabled]="busy()">
+                      {{ busy() ? 'Saving…' : 'Mark as paid' }}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            }
+          } @empty {
+            <tr>
+              <td colspan="6" class="empty">{{ loading() ? 'Loading…' : 'No fees raised for this student.' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      @if (error(); as problem) {
+        <div class="notice risk" role="alert">
+          <span class="icon" aria-hidden="true">error</span><div>{{ problem }}</div>
+        </div>
+      }
+    </div>
+
+    <footer class="dialog-foot">
+      <button type="button" class="btn" (click)="closed.emit()">Close</button>
+      <button type="button" class="btn primary" (click)="raiseAnother.emit()">
+        <span class="icon" aria-hidden="true">add</span>Raise another fee
+      </button>
+    </footer>
+  </div>
+</div>

@@ -245,6 +245,10 @@ class Student(Base):
             "current_semester >= 1 AND weekly_hour_target >= 0",
             name="ck_student_semester_target",
         ),
+        CheckConstraint(
+            "admission_quota IS NULL OR admission_quota IN ('CET', 'MANAGEMENT')",
+            name="ck_student_admission_quota",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
@@ -338,6 +342,11 @@ class Student(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     weekly_hour_target: Mapped[float] = mapped_column(Float, default=12, server_default="12")
+    # HOW THE STUDENT TOOK THEIR SEAT: "CET" or "MANAGEMENT" (the fee screens,
+    # 2026-10-29). NULL means the office has not recorded it, and a fee aimed
+    # at one quota does not reach such a student: the preview counts them so
+    # the office sees the gap before raising. No backfill, for that reason.
+    admission_quota: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="student")
 

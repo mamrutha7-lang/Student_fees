@@ -1,0 +1,204 @@
+/* Local to the Student fees board. `.panel` `.card` `.dt-table` `.chip`
+   `.notice` `.btn` `.ctrl` `.kpi-card` are the design system's globals. */
+
+.crumb {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  margin-bottom: 2px;
+}
+
+.head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0 14px;
+}
+
+.pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.pick select {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  color: var(--brand-purple);
+  max-width: 220px;
+  cursor: pointer;
+}
+
+.unit-note {
+  margin-left: auto;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.fee-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.kpi-foot {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.risk-num {
+  color: var(--risk);
+}
+
+.table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.table-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.search {
+  position: relative;
+  flex: 0 1 340px;
+  min-width: 0;
+}
+
+.search .icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.search .ctrl {
+  width: 100%;
+  padding-left: 34px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.fee-table {
+  width: 100%;
+  min-width: 960px;
+}
+
+.col-check {
+  width: 40px;
+}
+
+.mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.num-col {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--hairline);
+  color: var(--brand-purple);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.quota {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--hairline);
+  color: var(--brand-purple);
+  white-space: nowrap;
+}
+
+.quota.cet {
+  background: rgba(16, 122, 102, 0.12);
+  color: var(--good);
+}
+
+.quota.none {
+  background: transparent;
+  color: var(--muted);
+}
+
+.status-chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 28px 0;
+}
+
+.table-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

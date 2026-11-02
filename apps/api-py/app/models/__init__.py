@@ -18,6 +18,7 @@ from . import conversation  # noqa: F401
 from . import course  # noqa: F401
 from . import data_import  # noqa: F401
 from . import english_baseline  # noqa: F401
+from . import fee  # noqa: F401
 from . import feedback  # noqa: F401
 from . import governance  # noqa: F401
 from . import institution  # noqa: F401

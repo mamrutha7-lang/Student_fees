@@ -174,6 +174,12 @@ export const ADMIN_NAVIGATION: readonly NavigationGroup[] = [
         path: '/admin/exports',
         capability: 'admin.exports',
       },
+      {
+        label: 'Student fees',
+        icon: 'table_rows',
+        path: '/admin/fees',
+        mainAdminOnly: true,
+      },
     ],
   },
   {
@@ -281,6 +287,10 @@ const STUDENT_NAVIGATION: readonly NavigationGroup[] = [
   {
     title: 'Documents',
     items: [{ label: 'Resume Builder', icon: 'description', path: '/student/resume' }],
+  },
+  {
+    title: 'Account',
+    items: [{ label: 'My fees', icon: 'table_rows', path: '/student/fees' }],
   },
 ];
 

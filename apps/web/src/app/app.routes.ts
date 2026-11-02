@@ -218,6 +218,13 @@ export const routes: Routes = [
             (m) => m.MentorLogComponent,
           ),
       },
+      // My fees: what the college office raised, and Pay now through Razorpay.
+      {
+        path: 'student/fees',
+        canActivate: [roleGuard('STUDENT')],
+        loadComponent: () =>
+          import('./features/student/fees/my-fees.component').then((m) => m.MyFeesComponent),
+      },
       {
         path: 'student/profile',
         canActivate: [roleGuard('STUDENT')],
@@ -552,6 +559,15 @@ export const routes: Routes = [
           import('./features/admin/role-preferences/role-preferences.component').then(
             (m) => m.AdminRolePreferencesComponent,
           ),
+      },
+      // Student fees: raise a fee, track it until paid, record counter
+      // payments. Main Admin alone, like its API (`require_admin`): raising a
+      // fee writes a money claim onto a student.
+      {
+        path: 'admin/fees',
+        canActivate: [roleGuard('ADMIN')],
+        loadComponent: () =>
+          import('./features/admin/fees/fees.component').then((m) => m.AdminFeesComponent),
       },
       {
         path: 'admin/mail',

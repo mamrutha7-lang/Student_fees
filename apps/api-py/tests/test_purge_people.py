@@ -2,7 +2,7 @@
 
 The load-bearing test here is `test_the_delete_order_survives_every_foreign_key`,
 and it is written the way it is on purpose. `app.purge_people` is correct only
-if its delete order satisfies 184 real foreign keys — several of which carry no
+if its delete order satisfies 188 real foreign keys — several of which carry no
 ON DELETE clause at all (`login_days.user_id`, `mentors.user_id`,
 `students.user_id`, and the four `created_by_user_id` columns on the
 institutional spine, which point at rows that are about to be deleted from
