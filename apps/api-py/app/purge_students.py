@@ -40,7 +40,7 @@ plus one this module needs and `purge_people` does not.**
 FIRST, EVERY TABLE HAS A WRITTEN VERDICT — and here a verdict is not two
 values but three, because "delete the student rows" is a different sentence in
 a table only a student can own (`resumes`) and in a table shared with staff
-(`leave_requests`). `STUDENT_VERDICTS` below says which, for all 111 tables, and
+(`leave_requests`). `STUDENT_VERDICTS` below says which, for all 114 tables, and
 an unclassified table ABORTS THE RUN exactly as it does next door. The key set
 is checked against `purge_people.VERDICTS`, so the next person to add a model
 is stopped by BOTH destructors rather than by the one they happened to read.
@@ -150,7 +150,7 @@ def by_parent(table: str, column: str) -> tuple[str, str, str]:
     return ("via", table, column)
 
 
-#: What happens to each of the 111 tables. `KEEP` is untouched; `ALL` is emptied;
+#: What happens to each of the 114 tables. `KEEP` is untouched; `ALL` is emptied;
 #: anything else is a scope, and the row survives unless the scope names it.
 #: Grouped by the REASON, because the reason is what a reviewer has to check.
 STUDENT_VERDICTS: dict[str, object] = {
@@ -188,6 +188,11 @@ STUDENT_VERDICTS: dict[str, object] = {
     "courses": KEEP,
     "skills": KEEP,
     "jobs": KEEP,
+    # Student fees (2026-10-29): the price list stays; every demand is raised
+    # against students and every charge is one student's, so both are emptied.
+    "fee_structures": KEEP,
+    "fee_demands": ALL,
+    "fee_charges": ALL,
     "interview_bank_questions": KEEP,
     # The Specialization Matrix (B5.1) and the college's interview rules
     # (B6.1/B6.4). Staff-authored configuration, no student in either, and the

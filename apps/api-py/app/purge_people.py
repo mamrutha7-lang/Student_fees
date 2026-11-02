@@ -26,9 +26,9 @@ A table in the metadata that nobody classified ABORTS THE RUN — it is not
 quietly kept (which would leave a student's records behind) and not quietly
 emptied (which would destroy a catalogue somebody added last week). The next
 person to add a table is made to decide, by a test that fails in CI and by this
-module refusing to run. That is the whole reason the verdicts are a dict of 111
+module refusing to run. That is the whole reason the verdicts are a dict of 114
 entries — one per table, `len(VERDICTS)` — rather than a pair of prefixes and a
-`startswith`. (111 is the table count; the 184 below is the foreign-key count.
+`startswith`. (114 is the table count; the 188 below is the foreign-key count.
 They were both written as "93" for months, which is how a stale number spreads.)
 
 SECOND, THE FILES GO BEFORE THE ROWS. A row is the last pointer to a student's
@@ -130,6 +130,12 @@ VERDICTS: dict[str, str] = {
     "courses": KEEP,
     "skills": KEEP,
     "jobs": KEEP,
+    # Student fees (2026-10-29). The fee STRUCTURE is the office's price list
+    # and names nobody, so it stays; every demand and charge is a money claim
+    # on a person, so both go with the people.
+    "fee_structures": KEEP,
+    "fee_demands": EMPTY,
+    "fee_charges": EMPTY,
     "interview_bank_questions": KEEP,
     # B5.1 made the Specialization Matrix a table an admin edits, and B6.1 made
     # the interview's storage and caps a college's decision. Both are the
@@ -761,7 +767,7 @@ def _delete_rows(db: Session, plan: Plan) -> None:
 
     SEPARATE FROM `execute` AND WITHOUT A COMMIT ON PURPOSE. This is the half
     whose correctness is a property of the ORDER, and the only honest way to
-    test an order against 184 real foreign keys is to run it against the real
+    test an order against 188 real foreign keys is to run it against the real
     schema and roll back — which a function that commits cannot offer.
     tests/test_purge_people.py does exactly that.
     """

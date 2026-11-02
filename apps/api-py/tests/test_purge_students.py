@@ -1,6 +1,6 @@
 """Deleting every STUDENT while the faculty stay exactly where they are.
 
-`app.purge_people` is proven by one question — does the delete order satisfy 184
+`app.purge_people` is proven by one question — does the delete order satisfy 188
 real foreign keys. This module has to answer that AND a second one that
 `purge_people` never faces: for every table a student and a staff member can
 BOTH hold rows in, did the right half go?

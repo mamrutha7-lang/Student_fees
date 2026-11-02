@@ -133,6 +133,14 @@ class Settings(BaseSettings):
     # app/mail_transport.outbox (dev, CI, and a fresh deployment before IT has
     # verified the domain). Set to a verified SES identity to send for real;
     # SES authenticates through the task role, so there is no key to paste.
+    # --- student fees: Razorpay (routers/student_fees.py) ---
+    # Blank key pair = online payment off: the student still sees every fee,
+    # and the screen says to pay at the office instead of offering a button
+    # that can only fail. The key SECRET and the webhook secret never leave
+    # this process; only the key id is sent to the browser.
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
     ses_from_address: str = ""
     ses_region: str = ""  # falls back to AWS_REGION, then ap-south-1
     # The configuration set every message is sent UNDER, and the reason it is a
@@ -1229,6 +1237,15 @@ class Settings(BaseSettings):
         if text == "false":
             return False
         return self.mail_configured
+
+    @property
+    def razorpay_configured(self) -> bool:
+        """Both halves of the Razorpay key pair are set. One half is no key."""
+        return bool(self.razorpay_key_id.strip() and self.razorpay_key_secret.strip())
+
+    @property
+    def razorpay_webhook_configured(self) -> bool:
+        return bool(self.razorpay_webhook_secret.strip())
 
     @property
     def adzuna_configured(self) -> bool:

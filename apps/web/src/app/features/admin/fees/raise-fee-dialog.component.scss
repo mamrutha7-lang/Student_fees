@@ -1,0 +1,151 @@
+.picker-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-toggle .chevron {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.placeholder,
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.picked-name {
+  color: var(--ink-soft);
+}
+
+.picker {
+  margin-top: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: 0 12px 30px rgba(58, 31, 82, 0.12);
+  padding: 10px;
+}
+
+.picker-search {
+  position: relative;
+}
+
+.picker-search .icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.picker-search .ctrl {
+  width: 100%;
+  padding-left: 34px;
+}
+
+.picker-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.picker-row {
+  display: grid;
+  grid-template-columns: 22px 120px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-row:hover,
+.picker-row.on {
+  background: var(--hairline);
+}
+
+.picker-row .tick {
+  font-size: 16px;
+  color: var(--brand-purple);
+}
+
+.row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-empty,
+.picker-foot {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.details {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  background: var(--hairline);
+  padding: 14px 16px;
+}
+
+.details-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--brand-purple);
+}
+
+.fetched {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--good);
+}
+
+.fetched .icon {
+  font-size: 16px;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.details-grid dt {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.details-grid dd {
+  margin: 4px 0 0;
+  font-weight: 700;
+}

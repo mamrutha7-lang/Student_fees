@@ -42,7 +42,9 @@ from .routers import (
     interview,
     admin_deletion,
     admin_faculty,
+    admin_fees,
     admin_mail,
+    student_fees,
     admin_imports,
     admin_interview_tracks,
     admin_mentoring,
@@ -583,6 +585,11 @@ app.include_router(interview_policy.student_router)
 # writes a domain row. Mounted last among the admin surfaces because it is about
 # all of them.
 app.include_router(audit.router, prefix="/api")
+# Student fees (2026-10-29): the Main Admin raises fees and records payments,
+# the student pays through Razorpay, and Razorpay confirms on the webhook.
+app.include_router(admin_fees.router, prefix="/api")
+app.include_router(student_fees.router, prefix="/api")
+app.include_router(student_fees.webhook_router, prefix="/api")
 
 
 # --- The interview record endpoints (Interview Engine v3 §7) -----------------

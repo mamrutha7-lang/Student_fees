@@ -1,0 +1,207 @@
+<div class="dialog-backdrop" (click)="closed.emit()">
+  <div
+    class="dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="raise-fee-title"
+    tabindex="-1"
+    (click)="$event.stopPropagation()"
+  >
+    <header class="dialog-head">
+      <div>
+        <h2 class="dialog-title" id="raise-fee-title">Raise a fee</h2>
+        <p class="dialog-sub">The student sees this fee under My fees as soon as you raise it</p>
+      </div>
+      <button type="button" class="btn ghost sm" aria-label="Close" (click)="closed.emit()">
+        <span class="icon" aria-hidden="true">close</span>
+      </button>
+    </header>
+
+    <form class="dialog-body" (submit)="$event.preventDefault(); submit()">
+      <!-- ------------------------------------------------- Student ID -->
+      <div class="field">
+        <label for="raise-student">Student ID</label>
+        <button
+          type="button"
+          id="raise-student"
+          class="ctrl picker-toggle"
+          [attr.aria-expanded]="pickerOpen()"
+          (click)="pickerOpen.set(!pickerOpen())"
+        >
+          @if (student(); as s) {
+            <span class="mono">{{ s.usn ?? '—' }}</span><span class="picked-name">{{ s.name }}</span>
+          } @else {
+            <span class="placeholder">Pick a student</span>
+          }
+          <span class="icon chevron" aria-hidden="true">expand_more</span>
+        </button>
+
+        @if (pickerOpen()) {
+          <div class="picker">
+            <div class="picker-search">
+              <span class="icon" aria-hidden="true">search</span>
+              <label class="sr-only" for="raise-search">Search by Student ID or name</label>
+              <input
+                id="raise-search"
+                class="ctrl"
+                type="search"
+                autocomplete="off"
+                placeholder="Student ID or name"
+                [value]="search()"
+                (input)="onSearch($any($event.target).value)"
+              />
+            </div>
+            <ul class="picker-list" role="listbox" aria-label="Students">
+              @for (row of results()?.rows ?? []; track row.student_id) {
+                <li>
+                  <button
+                    type="button"
+                    role="option"
+                    class="picker-row"
+                    [class.on]="student()?.student_id === row.student_id"
+                    [attr.aria-selected]="student()?.student_id === row.student_id"
+                    (click)="pick(row)"
+                  >
+                    <span class="tick icon" aria-hidden="true">{{
+                      student()?.student_id === row.student_id ? 'check' : ''
+                    }}</span>
+                    <span class="mono">{{ row.usn ?? '—' }}</span>
+                    <span class="row-name">
+                      {{ row.name }}
+                      <span class="muted">
+                        @if (row.course_name) { · {{ row.course_name }} }
+                        @if (row.batch_label) { · {{ row.batch_label }} }
+                      </span>
+                    </span>
+                    <span class="quota" [class.cet]="row.quota === 'CET'" [class.none]="!row.quota">
+                      {{ quotaLabel(row.quota) }}
+                    </span>
+                  </button>
+                </li>
+              } @empty {
+                <li class="picker-empty">{{ searching() ? 'Searching…' : 'No current student matches.' }}</li>
+              }
+            </ul>
+            @if (results(); as r) {
+              <div class="picker-foot">
+                Showing {{ r.rows.length }} of {{ r.total }} students
+                @if (scopeLabel()) { in {{ scopeLabel() }} }
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- ------------------------------------------------ student details -->
+      @if (student(); as s) {
+        <div class="details">
+          <div class="details-head">
+            <strong>Student details</strong>
+            <span class="fetched"><span class="icon" aria-hidden="true">check</span>Fetched from the student record</span>
+          </div>
+          <dl class="details-grid">
+            <div><dt>Name</dt><dd>{{ s.name }}</dd></div>
+            <div><dt>Course</dt><dd>{{ s.course_name ?? '—' }}</dd></div>
+            <div><dt>Department</dt><dd>{{ s.department_name ?? '—' }}</dd></div>
+            <div><dt>Batch</dt><dd>{{ s.batch_label ?? '—' }}</dd></div>
+            <div>
+              <dt>Quota</dt>
+              <dd>
+                @if (s.quota) {
+                  <span class="quota" [class.cet]="s.quota === 'CET'">{{ quotaLabel(s.quota) }}</span>
+                } @else {
+                  <select
+                    class="ctrl"
+                    aria-label="Quota (not recorded yet)"
+                    [value]="quota()"
+                    (change)="setQuota($any($event.target).value)"
+                  >
+                    <option value="">Not recorded: pick one</option>
+                    @for (q of options().quotas; track q.value) {
+                      <option [value]="q.value">{{ q.label }}</option>
+                    }
+                  </select>
+                }
+              </dd>
+            </div>
+          </dl>
+        </div>
+      }
+
+      <!-- ------------------------------------------------------- fields -->
+      <div class="grid-2">
+        <div class="field">
+          <label for="raise-year">Academic year</label>
+          <select id="raise-year" [value]="year()" (change)="setYear($any($event.target).value)">
+            @for (y of options().academic_years; track y) {
+              <option [value]="y" [selected]="y === year()">{{ y }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="raise-amount">Fee amount (₹)</label>
+          <input
+            id="raise-amount"
+            type="text"
+            inputmode="numeric"
+            placeholder="Amount in rupees"
+            [value]="amount()"
+            (input)="setAmount($any($event.target).value)"
+          />
+          <p class="hint">
+            {{ amountFromStructure()
+              ? "Filled from the fee structure for the student's quota. You can change it."
+              : 'No standard amount is set for this quota and fee head. Type the amount.' }}
+          </p>
+        </div>
+        <div class="field">
+          <label for="raise-head">Fee head</label>
+          <select id="raise-head" [value]="feeHead()" (change)="setHead($any($event.target).value)">
+            @for (h of options().fee_heads; track h.value) {
+              <option [value]="h.value" [selected]="h.value === feeHead()">{{ h.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="raise-due">Due date</label>
+          <input id="raise-due" type="date" [value]="dueOn()" (input)="dueOn.set($any($event.target).value)" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="raise-note">Note to student (optional)</label>
+        <input
+          id="raise-note"
+          type="text"
+          maxlength="500"
+          placeholder="Shown beside the fee in My fees"
+          [value]="note()"
+          (input)="note.set($any($event.target).value)"
+        />
+      </div>
+
+      <div class="info-box">
+        <span class="icon" aria-hidden="true">info</span>
+        <div>
+          Status starts as Pending. It becomes Paid when the student pays online or the accounts
+          office records a payment, or Overdue after the due date.
+        </div>
+      </div>
+
+      @if (error(); as problem) {
+        <div class="notice risk" role="alert">
+          <span class="icon" aria-hidden="true">error</span><div>{{ problem }}</div>
+        </div>
+      }
+
+      <button type="submit" hidden aria-hidden="true" tabindex="-1"></button>
+    </form>
+
+    <footer class="dialog-foot">
+      <button type="button" class="btn" (click)="closed.emit()">Cancel</button>
+      <button type="button" class="btn primary" [disabled]="!canSubmit()" (click)="submit()">
+        <span class="icon" aria-hidden="true">add</span>{{ busy() ? 'Raising…' : 'Raise fee' }}
+      </button>
+    </footer>
+  </div>
+</div>

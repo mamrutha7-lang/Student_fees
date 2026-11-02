@@ -1,0 +1,86 @@
+<div class="dialog-backdrop" (click)="closed.emit()">
+  <div
+    class="dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="fee-structure-title"
+    tabindex="-1"
+    (click)="$event.stopPropagation()"
+  >
+    <header class="dialog-head">
+      <div>
+        <h2 class="dialog-title" id="fee-structure-title">Fee structure</h2>
+        <p class="dialog-sub">
+          The standard amount fills the Fee amount box when you raise a fee. Changing it does not
+          change fees already raised.
+        </p>
+      </div>
+      <button type="button" class="btn ghost sm" aria-label="Close" (click)="closed.emit()">
+        <span class="icon" aria-hidden="true">close</span>
+      </button>
+    </header>
+
+    <form class="dialog-body" (submit)="$event.preventDefault(); save()">
+      <div class="field year-field">
+        <label for="structure-year">Academic year</label>
+        <select id="structure-year" [value]="year()" (change)="setYear($any($event.target).value)">
+          @for (y of options().academic_years; track y) {
+            <option [value]="y" [selected]="y === year()">{{ y }}</option>
+          }
+        </select>
+      </div>
+
+      <table class="dt-table structure-table">
+        <thead>
+          <tr>
+            <th>Fee head</th>
+            @for (q of options().quotas; track q.value) {
+              <th>{{ q.label }} (₹)</th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (h of options().fee_heads; track h.value) {
+            <tr>
+              <td>{{ h.label }}</td>
+              @for (q of options().quotas; track q.value) {
+                <td>
+                  <input
+                    class="ctrl amount"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="Not set"
+                    [attr.aria-label]="h.label + ', ' + q.label + ' quota, in rupees'"
+                    [value]="drafts()[key(q.value, h.value)] ?? ''"
+                    [disabled]="loading()"
+                    (input)="setDraft(key(q.value, h.value), $any($event.target).value)"
+                  />
+                </td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      @if (error(); as problem) {
+        <div class="notice risk" role="alert">
+          <span class="icon" aria-hidden="true">error</span><div>{{ problem }}</div>
+        </div>
+      }
+      @if (notice(); as message) {
+        <div class="notice good" role="status">
+          <span class="icon" aria-hidden="true">check_circle</span><div>{{ message }}</div>
+        </div>
+      }
+      <button type="submit" hidden aria-hidden="true" tabindex="-1"></button>
+    </form>
+
+    <footer class="dialog-foot">
+      <button type="button" class="btn" (click)="closed.emit()">Close</button>
+      <button type="button" class="btn primary" [disabled]="!changed().length || saving()" (click)="save()">
+        <span class="icon" aria-hidden="true">save</span>
+        {{ saving() ? 'Saving…' : 'Save ' + (changed().length || '') + ' change(s)' }}
+      </button>
+    </footer>
+  </div>
+</div>

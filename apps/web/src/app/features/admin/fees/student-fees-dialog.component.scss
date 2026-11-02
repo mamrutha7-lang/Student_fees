@@ -1,0 +1,32 @@
+.num-col {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.paid-by {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.row-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pay-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.pay-form .grow {
+  flex: 1 1 220px;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 20px 0;
+}

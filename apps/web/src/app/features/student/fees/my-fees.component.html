@@ -1,0 +1,126 @@
+<div class="panel" data-p="student-fees">
+  <div class="dt-header">
+    <div>
+      <div class="eyebrow">Account · Academic year {{ data()?.academic_year ?? '' }}</div>
+      <h1 class="dt-title">My fees</h1>
+      <div class="dt-sub">Fees raised for you by the college office, with where each one stands</div>
+    </div>
+    <a class="btn" [href]="statementUrl" download>
+      <span class="icon" aria-hidden="true">description</span>Download statement
+    </a>
+  </div>
+
+  @if (error(); as problem) {
+    <div class="notice risk" role="alert">
+      <span class="icon" aria-hidden="true">error</span><div>{{ problem }}</div>
+    </div>
+  }
+  @if (notice(); as message) {
+    <div class="notice good" role="status">
+      <span class="icon" aria-hidden="true">check_circle</span><div>{{ message }}</div>
+    </div>
+  }
+
+  @if (data(); as d) {
+    @if (d.summary; as s) {
+      <div class="fee-cards">
+        <div class="kpi-card">
+          <div class="eyebrow">Total raised</div>
+          <div class="num">{{ rupees(s.total_raised_rupees) }}</div>
+          <div class="kpi-foot">
+            {{ s.fee_count }} fee{{ s.fee_count === 1 ? '' : 's' }}
+            @if (s.quota) { · {{ quotaLabel(s.quota) }} quota }
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="eyebrow">Paid</div>
+          <div class="num good-num">{{ rupees(s.paid_rupees) }}</div>
+          <div class="kpi-foot">{{ s.paid_count }} fee{{ s.paid_count === 1 ? '' : 's' }} settled</div>
+        </div>
+        <div class="kpi-card">
+          <div class="eyebrow">Balance to pay</div>
+          <div class="num" [class.risk-num]="s.balance_rupees > 0">{{ rupees(s.balance_rupees) }}</div>
+          <div class="kpi-foot">{{ s.pending_count }} pending · {{ s.overdue_count }} overdue</div>
+        </div>
+      </div>
+    }
+
+    @for (title of d.overdue_titles; track title) {
+      <div class="notice risk overdue-banner" role="status">
+        <span class="icon" aria-hidden="true">info</span>
+        <div>{{ title }} fee is past its due date. Pay it to clear the overdue status.</div>
+      </div>
+    }
+
+    @if (!d.payments_enabled && d.summary && d.summary.balance_rupees > 0) {
+      <div class="notice warn" role="status">
+        <span class="icon" aria-hidden="true">warning</span>
+        <div>Online payment is not switched on for this college yet. Please pay at the accounts office.</div>
+      </div>
+    }
+
+    <div class="card table-card">
+      <div class="table-scroll">
+        <table class="dt-table my-fees-table">
+          <thead>
+            <tr>
+              <th>Fee</th>
+              <th>Academic year</th>
+              <th>Quota</th>
+              <th class="num-col">Amount</th>
+              <th>Due date</th>
+              <th>Status</th>
+              <th class="action-col">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (fee of d.fees; track fee.id) {
+              <tr>
+                <td>
+                  <div class="fee-title">{{ fee.title }}</div>
+                  <div class="fee-sub">Raised on {{ calendarDay(fee.raised_on) }}</div>
+                  @if (fee.description) {
+                    <div class="fee-note">{{ fee.description }}</div>
+                  }
+                </td>
+                <td>{{ fee.academic_year ?? '—' }}</td>
+                <td><span class="quota" [class.cet]="fee.quota === 'CET'">{{ quotaLabel(fee.quota) }}</span></td>
+                <td class="num-col strong">{{ rupees(fee.amount_rupees) }}</td>
+                <td [class.risk-text]="fee.display_status === 'OVERDUE'">{{ calendarDay(fee.due_on) }}</td>
+                <td>
+                  <span class="chip status-chip {{ statusTone(fee.display_status ?? fee.status) }}">
+                    <span class="dot" aria-hidden="true"></span>
+                    {{ statusLabels[fee.display_status ?? fee.status] ?? fee.status }}
+                  </span>
+                </td>
+                <td class="action-col">
+                  @if (fee.status === 'PAID' && fee.receipt_number) {
+                    <a class="btn sm" [href]="receiptUrl(fee.id)" download>
+                      <span class="icon" aria-hidden="true">download</span>Receipt
+                    </a>
+                  } @else if (fee.status === 'PENDING') {
+                    <button
+                      type="button"
+                      class="btn primary sm"
+                      [disabled]="!d.payments_enabled || paying() !== null"
+                      (click)="pay(fee)"
+                    >
+                      <span class="icon" aria-hidden="true">lock</span>
+                      {{ paying() === fee.id ? 'Opening…' : 'Pay now' }}
+                    </button>
+                  }
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="7" class="empty">No fees have been raised for you yet.</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  } @else if (loading()) {
+    <p class="dt-sub">Loading your fees…</p>
+  }
+</div>
